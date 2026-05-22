@@ -141,8 +141,7 @@ def draw_section(section: Section, kps: Sequence[KeyPoint]):
         sp.set_edgecolor(P["spine"])
     ax.grid(True, alpha=0.2, color=P["grid"])
 
-    title = (f"{section.name}  |  A={section.area():.4f} in²  "
-             f"Iy={section.Iy():.4f} in⁴  Sy={section.Sy():.4f} in³")
+    title = (f"{section.name}  |  A={section.area():.2f} in²")
     ax.set_title(title, fontsize=8, color=P["text"], pad=8)
     fig.tight_layout()
     return fig

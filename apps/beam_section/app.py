@@ -374,7 +374,7 @@ def render() -> None:
             ("Sz", section.Sz(),        "in³"),
             ("f",  section.f_cozzone,   "shape factor"),
         ]:
-            info_card(label, f"{val:.4f}", unit)
+            info_card(label, f"{val:.2f}", unit)
 
     # ── 03 — Stress Results ───────────────────────────────────────────────
     section_header("Stress Results at Key Points", number="03",
