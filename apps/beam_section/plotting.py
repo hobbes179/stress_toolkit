@@ -179,7 +179,9 @@ def _stress_at(section: Section, loads, y: float, z: float) -> dict:
 
     tvy = loads.Vy * Qy / (Iy * tw_y) / 1000 if (Iy > 0 and tw_y > 0) else 0.0
     tvz = loads.Vz * Qz / (Iz * tw_z) / 1000 if (Iz > 0 and tw_z > 0) else 0.0
-    tau = math.sqrt(tvy**2 + tvz**2 + tau_T**2)
+    # v2 Phase 0 interim combination (CHANGELOG.md v1.1.0) — must match
+    # apps/beam_section/calculations.py::calc_stress_at_points exactly.
+    tau = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
 
     half = sn / 2
     radius = math.sqrt(half**2 + tau**2)

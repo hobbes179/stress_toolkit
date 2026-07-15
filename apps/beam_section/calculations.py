@@ -73,7 +73,12 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
                if (Iy > 0 and tw_y > 0) else 0.0)
         tvz = (loads.Vz * Qz / (Iz * tw_z) / 1000
                if (Iz > 0 and tw_z > 0) else 0.0)
-        tau_total = math.sqrt(tvy**2 + tvz**2 + tau_T**2)
+        # v2 Phase 0 interim combination (CHANGELOG.md v1.1.0): transverse
+        # and torsional shear are collinear along a wall segment, not
+        # orthogonal — RSS is unconservative. Algebraic combination (exact
+        # per-wall signs) lands in Phase 2/3; this is the conservative
+        # bound used until then.
+        tau_total = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
 
         # Principal stresses (2D state)
         half = sn / 2
@@ -121,6 +126,25 @@ def _safe_ms(allowable: float, sf: float, applied: float) -> float:
     return allowable / (sf * a) - 1
 
 
+def interaction_ms(Ra: float, Rb: float, Rs: float) -> float:
+    """
+    Margin of safety from the v2 §3.6 combined-interaction curve
+    (Bruhn C4-family):  (Ra + Rb) + Rs² = 1
+
+    Normal-stress ratios (axial, bending) group linearly; shear enters
+    quadratically. Closed-form solution for MS:
+
+        MS = 2 / [ (Ra+Rb) + √( (Ra+Rb)² + 4·Rs² ) ] − 1
+
+    Replaces the v1 RSS-style 1/√(Rc²+Rb²+Rs²) − 1 form (CHANGELOG.md
+    v1.1.0), which reported MS = +0.41 at Ra=Rb=0.5, Rs=0 — a true
+    zero-margin axial+bending state. This form gives MS = 0.0 there.
+    """
+    ra_rb = Ra + Rb
+    denom = ra_rb + math.sqrt(ra_rb**2 + 4 * Rs**2)
+    return 2 / denom - 1 if denom > 0 else 999.0
+
+
 def calc_margin_table(
     df_stress: pd.DataFrame,
     material:  Material,
@@ -132,19 +156,36 @@ def calc_margin_table(
     """
     Build the margin-of-safety table from the stress results.
 
-    Includes:
-      - σ₁ vs Fty (yield)
-      - σ₁ vs Ftu (ultimate)
-      - |σ₂| vs Fcy (compression yield)
-      - τ_total vs Fsu (shear ultimate)
-      - σ_vm vs Ftu (von Mises ultimate)
-      - MMPDS combined interaction (Rc² + Rb² + Rs²)
+    v2 §3.6 check set (CHANGELOG.md v1.1.0 — replaces the v1 six-check set
+    outright, not alongside it):
+      1. σ_vm vs Fty (yield, distortion energy — primary yield criterion)
+      2. σ₁ vs Ftu (ultimate, max principal — only governs when σ₁ > 0)
+      3. |σ₂| vs Fcy (compression yield — only governs when σ₂ < 0)
+      4. τ_wall vs Fsu (shear ultimate)
+      5. Combined interaction: (Ra+Rb) + Rs² = 1 curve (Bruhn C4-family),
+         replacing the RSS-style 1/√(Rc²+Rb²+Rs²) − 1 form, which was
+         unconservative (reported MS = +0.41 at a true zero-margin
+         axial+bending state — see CHANGELOG.md). Ra/Rb/Rs are computed
+         from SF_ult-factored applied stresses (see CHANGELOG.md
+         "Interaction SF" note) so this check responds to the SF_ult
+         control like every other row.
+
+    Removed checks (see CHANGELOG.md for rationale): "σ₁ vs Fty" (max-
+    normal-stress yield criterion — unconservative vs distortion energy
+    for shear-dominated states) and "σ_vm vs Ftu" (von Mises is a yield
+    criterion; pairing with an ultimate allowable was ad hoc and is
+    superseded by checks 2 and 4).
+
+    τ_wall is the per-point combined shear column ("τ_total"). In Phase 0
+    this is the interim conservative combination
+    √(τ_Vy²+τ_Vz²) + |τ_T|; Phase 2/3 replace it with the exact algebraic
+    per-wall combination without changing this table's structure.
     """
     Fty = material.Fty or 0.0
     Ftu = material.Ftu or 0.0
     Fcy = material.Fcy or 0.0
     Fsu = material.Fsu or 0.0
-    Fbu = section.f_cozzone * Ftu
+    Fbu = section.effective_f_cozzone * Ftu
 
     s1_max  = df_stress["σ1"].max()
     s2_min  = df_stress["σ2"].min()
@@ -153,37 +194,48 @@ def calc_margin_table(
     sb_max  = df_stress["σ_bend"].abs().max()
 
     A = section.area()
-    sa_abs = abs(loads.P / A / 1000) if A > 0 else 0.0
+    sa = loads.P / A / 1000 if A > 0 else 0.0
+    sa_abs = abs(sa)
 
-    Rc = sa_abs / Ftu if Ftu > 0 else 0.0
-    Rb = sb_max / Fbu if Fbu > 0 else 0.0
-    Rs = tau_max / Fsu if Fsu > 0 else 0.0
-    denom = math.sqrt(Rc**2 + Rb**2 + Rs**2)
-    ms_int = 1 / denom - 1 if denom > 0 else 999.0
+    # Applied values for checks 2/3 are only "active" on their governing
+    # sign; otherwise floored to ~0 by _safe_ms so the check trivially
+    # passes rather than reporting a nonsensical MS.
+    s1_applied = max(s1_max, 0.0)
+    s2_applied = abs(min(s2_min, 0.0))
+
+    # SF_ult scales the applied stress into each ratio (consistent with
+    # every other check's MS = Allow/(SF·Applied) − 1 definition — see
+    # CHANGELOG.md v1.1.0 "Interaction SF" note). The §3.6 handoff doc's
+    # literal Ra/Rb/Rs formulas omit SF; baking it in here means the
+    # interaction MS responds to the SF_ult sidebar control like every
+    # other row, and MS=0 lands exactly at SF_ult·applied = allowable.
+    Fa = Ftu if sa >= 0 else Fcy
+    Ra = sf_ult * sa_abs / Fa if Fa > 0 else 0.0
+    Rb = sf_ult * sb_max / Fbu if Fbu > 0 else 0.0
+    Rs = sf_ult * tau_max / Fsu if Fsu > 0 else 0.0
+    ms_int = interaction_ms(Ra, Rb, Rs)
 
     rows: list[dict] = [
-        {"Check": "σ₁ vs Fty (yield)",
-         "Allow": Fty, "SF": sf_yield, "Applied": s1_max,
-         "MS": _safe_ms(Fty, sf_yield, s1_max)},
+        {"Check": "σ_vm vs Fty (yield)",
+         "Allow": Fty, "SF": sf_yield, "Applied": svm_max,
+         "MS": _safe_ms(Fty, sf_yield, svm_max)},
 
         {"Check": "σ₁ vs Ftu (ultimate)",
-         "Allow": Ftu, "SF": sf_ult, "Applied": s1_max,
-         "MS": _safe_ms(Ftu, sf_ult, s1_max)},
+         "Allow": Ftu, "SF": sf_ult, "Applied": s1_applied,
+         "MS": _safe_ms(Ftu, sf_ult, s1_applied)},
 
         {"Check": "|σ₂| vs Fcy (compression yield)",
-         "Allow": Fcy, "SF": sf_yield, "Applied": abs(s2_min),
-         "MS": _safe_ms(Fcy, sf_yield, abs(s2_min))},
+         "Allow": Fcy, "SF": sf_yield, "Applied": s2_applied,
+         "MS": _safe_ms(Fcy, sf_yield, s2_applied)},
 
-        {"Check": "τ_total vs Fsu (shear ultimate)",
+        {"Check": "τ_wall vs Fsu (shear ultimate)",
          "Allow": Fsu, "SF": sf_ult, "Applied": tau_max,
          "MS": _safe_ms(Fsu, sf_ult, tau_max)},
 
-        {"Check": "σ_vm vs Ftu (von Mises, ultimate)",
-         "Allow": Ftu, "SF": sf_ult, "Applied": svm_max,
-         "MS": _safe_ms(Ftu, sf_ult, svm_max)},
-
-        {"Check": "MMPDS combined interaction §1.3",
-         "Allow": "—", "SF": sf_ult, "Applied": "Rc²+Rb²+Rs²",
+        {"Check": "Combined interaction (Ra+Rb)+Rs²=1",
+         "Allow": f"Fa={Fa:.1f}  Fbu={Fbu:.1f}  Fsu={Fsu:.1f}",
+         "SF": sf_ult,
+         "Applied": f"Ra={Ra:.3f}  Rb={Rb:.3f}  Rs={Rs:.3f}",
          "MS": ms_int},
     ]
     return pd.DataFrame(rows)

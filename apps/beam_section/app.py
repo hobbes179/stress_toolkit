@@ -95,9 +95,12 @@ FORMULAE = [
      "Torsion is excluded for all open thin-walled sections.",
      _OPEN_SECTIONS),
 
-    ("Total Shear",
-     "τ_total = √(τ_Vy² + τ_Vz² + τ_T²)",
-     "RSS combination at each key point.",
+    ("Total Shear (interim, v1.1.0)",
+     "τ_wall = √(τ_Vy² + τ_Vz²) + |τ_T|",
+     "Transverse and torsional shear are collinear along a wall segment — "
+     "combined algebraically, not by RSS (RSS under-predicts up to ~29% "
+     "when components are equal; see CHANGELOG.md). This is the conservative "
+     "interim form; exact per-wall-point combination lands in a later phase.",
      None),
 
     ("Principal Stresses",
@@ -115,15 +118,19 @@ FORMULAE = [
      "MS ≥ 0 PASS,  MS < 0 FAIL.",
      None),
 
-    ("MMPDS Interaction",
-     "MS = 1/√(Rc² + Rb² + Rs²) − 1",
-     "Rc = σ_ax/Ftu,  Rb = σ_bend/Fbu,  Rs = τ/Fsu.",
+    ("Combined Interaction (v1.1.0)",
+     "MS = 2 / [(Ra+Rb) + √((Ra+Rb)² + 4·Rs²)] − 1",
+     "Curve: (Ra+Rb) + Rs² = 1. Ra = SF_ult·|σ_axial|/Fa (Fa=Ftu tension, "
+     "Fcy compression), Rb = SF_ult·|σ_bend|/Fbu, Rs = SF_ult·τ_wall/Fsu. "
+     "Replaces the RSS-style 1/√(Rc²+Rb²+Rs²)−1 form, which was "
+     "unconservative (see CHANGELOG.md).",
      None),
 
     ("Cozzone Fbu",
-     "Fbu = f · Ftu",
-     "f = shape factor (simplified constant per section class). "
-     "See library/shapes/shapes.py for table.",
+     "Fbu = f_eff · Ftu",
+     "f_eff = shape factor, gated to 1.0 for thin-walled open sections "
+     "(plastic-bending credit unsubstantiated without a crippling check). "
+     "Solid/closed shapes keep their table value. See library/shapes/shapes.py.",
      None),
 ]
 
@@ -191,6 +198,11 @@ def render() -> None:
                 dims.append(v)
 
         section = make_section(shape_name, dims)
+
+        dim_error = section.validate_dims()
+        if dim_error:
+            st.error(dim_error)
+            st.stop()
 
         section_header("Applied Loads")
         P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
@@ -273,15 +285,21 @@ def render() -> None:
     section_header("Governing Stress Summary", number="01",
                    desc="extreme-fiber results across the section")
 
-    fbu = section.f_cozzone * (material.Ftu or 0.0)
+    fbu = section.effective_f_cozzone * (material.Ftu or 0.0)
+    cozzone_gated = section.effective_f_cozzone != section.f_cozzone
+    # Order must track find_governing()'s output order (σ1, σ2, σ_vm,
+    # τ_total, σ_bend) and pair each with the allowable its §3.6 check
+    # actually uses (v1.1.0): σ1↔Ftu, σ2↔Fcy, σ_vm↔Fty, τ↔Fsu. σ_bend has
+    # no standalone check post-v1.1.0 (folds into the Rb interaction term)
+    # — paired with Fbu for display continuity only.
     stress_allowables = [
-        (material.Fty or 0.0, "Fty", sf_yield),
-        (material.Fcy or 0.0, "Fcy", sf_yield),
         (material.Ftu or 0.0, "Ftu", sf_ult),
+        (material.Fcy or 0.0, "Fcy", sf_yield),
+        (material.Fty or 0.0, "Fty", sf_yield),
         (material.Fsu or 0.0, "Fsu", sf_ult),
         (fbu,                 "Fbu", sf_ult),
     ]
-    combined_ms_rows = df_ms[df_ms["Check"].str.contains("MMPDS", na=False)]
+    combined_ms_rows = df_ms[df_ms["Check"].str.contains("Combined interaction", na=False)]
     combined_ms = float(combined_ms_rows.iloc[0]["MS"]) if not combined_ms_rows.empty else None
     stress_card_strip(govs, stress_allowables, combined_ms=combined_ms)
 
@@ -353,7 +371,8 @@ def render() -> None:
             )
         if material.Ftu is not None:
             info_card("Fbu", f"{fbu:.1f}", "ksi",
-                      sub=f"= f·Ftu  (f = {section.f_cozzone:.2f})")
+                      sub=f"= f·Ftu  (f = {section.effective_f_cozzone:.2f})",
+                      flag="GATED" if cozzone_gated else None)
         st.caption(material.source)
 
         section_header("Applied Loads")
@@ -372,9 +391,14 @@ def render() -> None:
             ("J",  section.J_torsion(), "in⁴"),
             ("Sy", section.Sy(),        "in³"),
             ("Sz", section.Sz(),        "in³"),
-            ("f",  section.f_cozzone,   "shape factor"),
+            ("f",  section.effective_f_cozzone, "shape factor"),
         ]:
             info_card(label, f"{val:.2f}", unit)
+        if cozzone_gated:
+            st.caption(
+                f"f = 1.0 (plastic bending gated pending crippling check — "
+                f"table value {section.f_cozzone:.2f} not used)"
+            )
 
     # ── 03 — Stress Results ───────────────────────────────────────────────
     section_header("Stress Results at Key Points", number="03",

@@ -173,7 +173,7 @@ def stress_card_strip(
         cards.append(
             "<div class='tk-stress-card tk-stress-card--combined'>"
             "<div class='tk-sc-label'>"
-            "<span class='tk-sc-name'>MMPDS Interaction</span>"
+            "<span class='tk-sc-name'>Combined Interaction</span>"
             f"<span class='tk-badge {status}'>{_status_label(status)}</span>"
             "</div>"
             "<div class='tk-sc-val'>"
@@ -181,7 +181,7 @@ def stress_card_strip(
             "<span class='tk-sc-unit'>MS</span>"
             "</div>"
             "<div class='tk-sc-util-row'>"
-            "<span>Rc² + Rb² + Rs²  §1.3</span>"
+            "<span>(Ra+Rb) + Rs² = 1</span>"
             f"<b>{pct:.1f}%</b>"
             "</div>"
             "<div class='tk-sc-bar'>"

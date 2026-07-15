@@ -38,17 +38,23 @@ values from the Cozzone simplified method (Cozzone 1943, NACA TN-1818).
 A rigorous Cozzone analysis derives f from both shape AND material stress-
 strain behaviour. The values used here are conservative for ductile metals.
 
+⚠️ GATED (v2 D5, CHANGELOG.md v1.1.0): for thin-walled open sections
+(category == "Open thin-walled"), `effective_f_cozzone` overrides the
+table value below to 1.0 — plastic-bending credit is not substantiated
+without a crippling check. Use `effective_f_cozzone`, not `f_cozzone`,
+wherever Fbu is computed. Solids and closed sections are unaffected.
+
   Rectangle:              f = 1.50
   Circle:                 f = 1.70
   Ellipse:                f = 1.60
   Rect Tube (HSS):        f = 1.30
   Circular Tube:          f = 1.40
-  I-Beam / W-Shape:       f = 1.07     (flange-dominated, small contribution from plasticity)
-  T-Beam:                 f = 1.15
-  L-Beam / Angle:         f = 1.15
-  C-Beam / Channel:       f = 1.15
-  Z-Beam:                 f = 1.10
-  Plus / Cross:           f = 1.30
+  I-Beam / W-Shape:       f = 1.07     GATED → 1.0
+  T-Beam:                 f = 1.15     GATED → 1.0
+  L-Beam / Angle:         f = 1.15     GATED → 1.0
+  C-Beam / Channel:       f = 1.15     GATED → 1.0
+  Z-Beam:                 f = 1.10     GATED → 1.0
+  Plus / Cross:           f = 1.30     GATED → 1.0
 
 ═══════════════════════════════════════════════════════════════════════════
 ADDING A NEW SHAPE — see library/shapes/README.md
@@ -172,6 +178,34 @@ class Section:
         """Section modulus about Z."""
         cy = self.cy()
         return self.Iz() / cy if cy > 0 else 0.0
+
+    def validate_dims(self) -> Optional[str]:
+        """
+        Return a validation error message if the current dims are
+        physically invalid, else None. Subclasses override to add
+        shape-specific checks. Never raises — callers must surface the
+        message and skip the solve rather than let an exception reach it.
+        """
+        return None
+
+    @property
+    def is_thin_walled(self) -> bool:
+        """True for the 'Open thin-walled' shape category."""
+        return self.category == "Open thin-walled"
+
+    @property
+    def effective_f_cozzone(self) -> float:
+        """
+        Cozzone plastic-bending shape factor used for Fbu = f·Ftu, gated
+        per v2 decision D5 (see CHANGELOG.md, v1.1.0): thin-walled open
+        sections are forced to f = 1.0 — plastic-bending credit is not
+        substantiated without a crippling check for these shapes. Solid
+        and compact closed shapes keep their documented table values
+        (`f_cozzone`).
+        """
+        if self.is_open_section and self.is_thin_walled:
+            return 1.0
+        return self.f_cozzone
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -396,6 +430,21 @@ class Ellipse(Section):
         a_major = max(self.d1, self.d2)
         return 2 * abs(T_load) / (math.pi * a_major * b_minor**2) / 1000
 
+    def validate_dims(self) -> Optional[str]:
+        # ⚠️ v2 D-gate (CHANGELOG.md v1.1.0): the exact torsion formula
+        # τ_T = 2T/(π·a·b²) requires b = semi-MINOR axis. Enforce a ≥ b
+        # explicitly (D1 = a horizontal ≥ D2 = b vertical) rather than
+        # silently reordering — a silent swap risks the geometry (Iy/Iz,
+        # key points) and the torsion formula disagreeing about which
+        # axis is "major" if only one of them is corrected.
+        if self.d2 > self.d1:
+            return (
+                "Ellipse requires a ≥ b: D1 (horizontal semi-axis) must be "
+                "≥ D2 (vertical semi-axis). Swap D1/D2 to model a "
+                "tall ellipse, or reduce D2."
+            )
+        return None
+
     def Qy(self):
         # First moment of upper semi-ellipse: 2·a·b²/3
         return 2 * self.d1 * self.d2**2 / 3
@@ -506,6 +555,23 @@ class RectTube(Section):
         if Am <= 0 or tmin <= 0:
             return 0.0
         return abs(T_load) / (2 * Am * tmin) / 1000
+
+    def validate_dims(self) -> Optional[str]:
+        # ⚠️ Bredt min-thickness guard (CHANGELOG.md v1.1.0): if the walls
+        # consume the whole section, the inner void area used by area()
+        # and the Bredt-Batho median-line Am go to zero/negative — J and
+        # τ_T were silently returning 0.0 rather than flagging invalid
+        # geometry.
+        b, h, tf, tw = self.d1, self.d2, self.d3, self.d4
+        if tf <= 0 or tw <= 0:
+            return "Rect Tube wall thicknesses (t_f, t_w) must be > 0."
+        if (b - 2 * tw) <= 0 or (h - 2 * tf) <= 0:
+            return (
+                "Rect Tube wall thickness exceeds the section — the "
+                "enclosed (Bredt-Batho) area would be zero or negative. "
+                "Reduce t_f/t_w or increase b/h."
+            )
+        return None
 
     def Qy(self):
         b, h, tf, tw = self.d1, self.d2, self.d3, self.d4
