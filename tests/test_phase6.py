@@ -88,3 +88,41 @@ def test_hollow_tube_interactive_contour_not_empty():
                                      _MAT, 1.0, 1.5, "σ_vm (von Mises)")
     z = np.asarray(fig.data[0].z, dtype=float)
     assert np.isfinite(z).sum() > 500               # the ring is populated
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Mesh quality: ≥2 elements through wall thickness (no element bridges a wall)
+# ──────────────────────────────────────────────────────────────────────────
+def test_default_mesh_gives_two_elements_through_thickness():
+    # A thin strip 2.0 × t: at the default mesh size, no single element may
+    # span more than ~0.9·t through the thickness (i.e. it can't touch both
+    # walls). The old t²/2 sizing let ~half the elements bridge the wall.
+    from library.analysis.fem_solver import fem_mesh, default_mesh_size
+    t = 0.1
+    outer = np.array([[0, 0], [2.0, 0], [2.0, t], [0, t]], dtype=float)
+    ms = default_mesh_size(outer, [], min_wall=t)
+    verts, tris = fem_mesh(outer, [], ms)
+    span = verts[tris, 1]                       # (n_el, 3) z of the corners
+    through = span.max(axis=1) - span.min(axis=1)
+    assert through.max() < 0.9 * t              # nothing bridges both walls
+    assert tris.shape[0] > 100                  # genuinely refined
+
+
+def test_contour_overlays_toggle_and_shear_point_and_mesh():
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    loads = Loads(Vz=1000, My=2000)
+    # Only the centroid overlay + the shear-application point, plus mesh lines.
+    fig = interactive_stress_contour(
+        sec, loads, _MAT, 1.0, 1.5, "τ (shear)",
+        shear_app=(0.5, 0.0), overlays={"centroid", "shear_point"},
+        show_mesh=True)
+    names = {tr.name for tr in fig.data if tr.name}
+    assert "shear applied" in names             # the yellow diamond is drawn
+    assert "mesh" in names                       # mesh-line overlay present
+    assert "neutral axis" not in names           # excluded overlay stays off
+
+    # Empty overlay set ⇒ no marker/line overlays (heatmap + outline only).
+    fig2 = interactive_stress_contour(
+        sec, loads, _MAT, 1.0, 1.5, "τ (shear)", overlays=set())
+    names2 = {tr.name for tr in fig2.data if tr.name}
+    assert "centroid" not in names2 and "shear applied" not in names2

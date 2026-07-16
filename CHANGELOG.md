@@ -36,6 +36,35 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6A.2 — Mesh quality + contour overlays
+
+**Mesh sizing — guarantee ≥2 elements through wall thickness.**
+`default_mesh_size` for thin-walled sections changed from a max element area
+of `t²/2` to `t²/8` (edge ≈ t/2). Rationale: at `t²/2`, ~50% of elements
+spanned the full wall thickness — a single element touching both faces of a
+wall, which the owner explicitly does not want. At `t²/8` the worst element's
+through-thickness span is ≈0.6·t and **zero** elements bridge a wall
+(measured on a 2.0×0.1 strip: 254 elements, max span 0.62·t). Effect on
+results: finer FEM mesh ⇒ marginally more accurate warping/stress and better
+J convergence (all existing convergence tolerances still met). ~4× element
+count at the default mesh; the warping solve remains the slow step but is
+cached. The app mesh-refinement presets were relabeled **Standard (2 elem /
+thickness) / Fine / Very fine** — the coarsest option no longer goes below
+2-through-thickness (dropped the old "Coarse" = `t²/2`).
+
+Note on mesh type: the FEM backend (`sectionproperties` → Triangle) produces
+**6-node quadratic triangles (Tri6)** — midside nodes are already used in the
+solve. Quadrilateral / structured "square" elements are not available without
+replacing the mesher; element *area* (above) is the controllable quality knob,
+alongside Triangle's built-in 30° min-angle constraint.
+
+**Interactive contour overlays.** The Plotly contour gained a shear-application
+-point marker (yellow diamond, distinct from the orange shear-center ✕ — the
+offset between them is what induces torsion), plus per-overlay visibility
+toggles (Centroid / Shear center / Neutral axis / Shear point) and an optional
+**Mesh lines** overlay. `interactive_stress_contour` gained keyword args
+`shear_app`, `overlays`, `show_mesh` (defaults preserve prior behavior).
+
 ### 6A — Interactive stress contour with a correct shear field (§6.2)
 
 Fixes the long-standing degenerate shear contour and adds the Plotly hover

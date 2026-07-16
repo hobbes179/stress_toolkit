@@ -300,11 +300,14 @@ def render() -> None:
         mesh_scale = 1.0
         if solver_choice == "FEM":
             _mesh_choice = st.selectbox(
-                "FEM mesh refinement", ["Default", "Coarse", "Fine"],
-                help="Max element area vs the auto heuristic. Finer = more "
+                "FEM mesh refinement",
+                ["Standard (2 elem / thickness)", "Fine", "Very fine"],
+                help="Standard already puts ≥2 elements through every wall "
+                     "thickness (no element bridges a wall). Finer = more "
                      "accurate, slower (the warping solve is the slow step).",
             )
-            mesh_scale = {"Coarse": 4.0, "Default": 1.0, "Fine": 0.25}[_mesh_choice]
+            mesh_scale = {"Standard (2 elem / thickness)": 1.0,
+                          "Fine": 0.5, "Very fine": 0.25}[_mesh_choice]
 
         section_header("Applied Loads")
         P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
@@ -533,10 +536,24 @@ def render() -> None:
                     "Stress field", list(FIELD_LABELS.keys()),
                     horizontal=True, key="contour_choice",
                 )
+                _oc = st.columns(5)
+                _ov = set()
+                if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
+                    _ov.add("centroid")
+                if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
+                    _ov.add("shear_center")
+                if _oc[2].checkbox("Neutral axis", value=True, key="ov_na"):
+                    _ov.add("neutral_axis")
+                if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
+                    _ov.add("shear_point")
+                _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
+                                             key="ov_mesh")
                 with st.spinner("Computing FEM stress field…"):
                     fig_i = interactive_stress_contour(
                         section, loads, material, sf_yield, sf_ult,
-                        field_label, mesh_scale=mesh_scale)
+                        field_label, mesh_scale=mesh_scale,
+                        shear_app=(y_app, z_app), overlays=_ov,
+                        show_mesh=_show_mesh)
                 st.plotly_chart(fig_i, use_container_width=True)
                 st.caption(
                     "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "

@@ -66,18 +66,47 @@ def _point_min_ms(sx, tau, s1, s2, svm, material, sf_yield, sf_ult, fbu):
     return min(checks)
 
 
+def _mesh_edge_segments(section, mesh_scale):
+    """(xs, ys) polyline (NaN-separated per triangle) of the FEM element edges,
+    in our (y, z) axes — for the optional 'mesh lines' contour overlay."""
+    from library.analysis.fem_solver import fem_mesh
+    from apps.beam_section.calculations import fem_mesh_size_for
+    g = section.geometry()
+    verts, tris = fem_mesh(g.outer, g.voids, fem_mesh_size_for(section, mesh_scale))
+    xs: list = []
+    ys: list = []
+    for tri in tris:
+        p = verts[tri]
+        xs.extend([p[0, 0], p[1, 0], p[2, 0], p[0, 0], np.nan])
+        ys.extend([p[0, 1], p[1, 1], p[2, 1], p[0, 1], np.nan])
+    return xs, ys
+
+
 def interactive_stress_contour(
     section, loads: Loads, material: Material,
     sf_yield: float, sf_ult: float, field_key: str,
     mesh_scale: float = 1.0, n_grid: int = 160,
+    *,
+    shear_app: tuple[float, float] | None = None,
+    overlays: set[str] | None = None,
+    show_mesh: bool = False,
 ):
     """
     Build the Plotly interactive stress contour for `field_key` (a value of
     FIELD_LABELS). Returns a plotly.graph_objects.Figure.
+
+    Overlays are toggled via `overlays` (a subset of {"centroid",
+    "shear_center", "neutral_axis", "shear_point"}); None = show all. The
+    shear-application point is drawn when `shear_app=(y_app, z_app)` is given
+    and "shear_point" is enabled. `show_mesh=True` overlays the FEM element
+    edges.
     """
     import plotly.graph_objects as go
     from library.analysis.fem_solver import fem_stress_at, default_mesh_size
     from apps.beam_section.calculations import fem_mesh_size_for
+
+    if overlays is None:
+        overlays = {"centroid", "shear_center", "neutral_axis", "shear_point"}
 
     geom = section.geometry()
     outer = np.asarray(geom.outer)
@@ -138,6 +167,14 @@ def interactive_stress_contour(
         colorbar=dict(title=field_key),
     ))
 
+    # Optional FEM mesh-line overlay (drawn under the outline/markers).
+    if show_mesh:
+        mxs, mys = _mesh_edge_segments(section, mesh_scale)
+        fig.add_trace(go.Scatter(
+            x=mxs, y=mys, mode="lines",
+            line=dict(color="rgba(255,255,255,0.28)", width=0.5),
+            name="mesh", hoverinfo="skip"))
+
     # Crisp boundary + void outlines.
     def _closed(loop):
         p = np.vstack([loop, loop[0]])
@@ -152,24 +189,36 @@ def interactive_stress_contour(
                                  line=dict(color="white", width=2),
                                  hoverinfo="skip", showlegend=False))
 
-    # Overlays: centroid, shear centre, neutral axis (bending), principal axes.
-    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers",
-                             marker=dict(symbol="cross", size=9, color="white"),
-                             name="centroid", hoverinfo="name"))
+    # Overlays: centroid, shear centre, neutral axis, shear-application point.
+    if "centroid" in overlays:
+        fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers",
+                                 marker=dict(symbol="cross", size=9, color="white"),
+                                 name="centroid", hoverinfo="name"))
     sc = shear_center(section)
-    if sc is not None and (abs(sc[0]) > 1e-4 or abs(sc[1]) > 1e-4):
+    if "shear_center" in overlays and sc is not None and (
+            abs(sc[0]) > 1e-4 or abs(sc[1]) > 1e-4):
         fig.add_trace(go.Scatter(x=[sc[0]], y=[sc[1]], mode="markers",
                                  marker=dict(symbol="x", size=10, color="#ff6d00"),
                                  name="shear center", hoverinfo="name"))
-    na = neutral_axis_angle_deg(section, loads)
-    if na is not None:
-        L = max(cy, cz) * 1.3
-        ang = np.radians(na)
+    if "neutral_axis" in overlays:
+        na = neutral_axis_angle_deg(section, loads)
+        if na is not None:
+            L = max(cy, cz) * 1.3
+            ang = np.radians(na)
+            fig.add_trace(go.Scatter(
+                x=[-L * np.cos(ang), L * np.cos(ang)],
+                y=[-L * np.sin(ang), L * np.sin(ang)],
+                mode="lines", line=dict(color="white", width=1.2, dash="dot"),
+                name="neutral axis", hoverinfo="name"))
+    if "shear_point" in overlays and shear_app is not None:
+        ya, za = shear_app
+        # Distinct from the shear CENTER (orange ✕): the point where transverse
+        # shear is actually applied (yellow diamond). Offset from SC ⇒ torsion.
         fig.add_trace(go.Scatter(
-            x=[-L * np.cos(ang), L * np.cos(ang)],
-            y=[-L * np.sin(ang), L * np.sin(ang)],
-            mode="lines", line=dict(color="white", width=1.2, dash="dot"),
-            name="neutral axis", hoverinfo="name"))
+            x=[ya], y=[za], mode="markers",
+            marker=dict(symbol="diamond", size=11, color="#ffd60a",
+                        line=dict(color="black", width=1)),
+            name="shear applied", hoverinfo="name"))
 
     pad = max(cy, cz) * 0.12
     fig.update_xaxes(title="y (in)", range=[-cy - pad, cy + pad],

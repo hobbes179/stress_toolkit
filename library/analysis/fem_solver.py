@@ -146,11 +146,19 @@ def fem_j_convergence(outer: np.ndarray, voids, mesh_size: float):
 
 def default_mesh_size(outer: np.ndarray, voids, min_wall: float | None = None) -> float:
     """
-    Mesh size heuristic (design handoff §4): ~(min wall thickness)²/2 for
-    thin-walled imports; otherwise a fraction of the bounding-box diagonal.
+    Mesh size heuristic (design handoff §4): the returned value is Triangle's
+    MAX ELEMENT AREA constraint.
+
+    Thin-walled sections target **≥2 elements through the wall thickness** so
+    no single element ever bridges both faces of a wall (except at a corner).
+    For a quality (min-angle 30°) triangle the area↔edge relation is
+    A ≈ ½·edge²; setting edge = t/2 gives A = t²/8. Empirically this keeps the
+    worst element's through-thickness span at ≈0.6·t with zero elements
+    bridging both walls (the old t²/2 let ~50% of elements span the full
+    thickness). Solids fall back to a fraction of the bounding-box diagonal.
     """
     if min_wall and min_wall > 0:
-        return max(min_wall**2 / 2.0, 1e-6)
+        return max(min_wall**2 / 8.0, 1e-9)
     p = np.asarray(outer)
     diag = float(np.hypot(np.ptp(p[:, 0]), np.ptp(p[:, 1])))
     return max((diag / 40.0) ** 2, 1e-6)
