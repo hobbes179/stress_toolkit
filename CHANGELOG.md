@@ -36,6 +36,25 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6C.1 — Report figure: fix uniform-shear contour
+
+Bug fix (plotting only; table/margin numbers unaffected). The "Report figure
+(matplotlib, print-quality)" in the Results tab still called the legacy
+`draw_contour`, whose `_stress_at` computes shear from **section-level
+constants** (`Qy, Qz, tw_y, tw_z, tau_T`) that don't depend on (y, z). Result:
+the shear field (and the τ contribution to σ_vm/σ₁/σ₂) rendered as a single
+uniform value — the "old uniform shear" the report figure showed. Only the
+interactive Plotly view had been switched to the real FEM field in 6A.
+
+Fix: new `draw_report_contour(section, ys, zs, sig, tau, field_key)` renders
+the print figure from the **same `compute_stress_field` FEM grid** the
+interactive view uses (fetched via the 6B cache → instant), so the report
+figure and the interactive contour are now identical fields in different
+renderers. Void masking (tube bore) preserved via the centroid-in-section
+triangle mask. The legacy `draw_contour` is retained only for the no-FEM
+fallback. Regression test asserts the legacy τ path is uniform (no colorbar)
+while the FEM report path varies (colorbar present).
+
 ### 6C — Tabbed layout + governing banner (§6.3)
 
 Presentation only; no results change. The single long scrolling page was

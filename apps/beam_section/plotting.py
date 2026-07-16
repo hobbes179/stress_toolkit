@@ -445,6 +445,108 @@ def draw_contour(
     return fig
 
 
+def draw_report_contour(
+    section: Section,
+    ys: np.ndarray,
+    zs: np.ndarray,
+    sig: np.ndarray,
+    tau: np.ndarray,
+    field_key: str,
+):
+    """
+    Print-quality (white background) matplotlib contour rendered from the SAME
+    FEM stress field the interactive view uses (compute_stress_field →
+    ys, zs, sig, tau). This replaces the legacy draw_contour for the report
+    figure so the shear field varies correctly instead of showing the old
+    uniform VQ/It value.
+
+    `sig`, `tau` are the (nz, ny) grids in ksi with points outside the section
+    set to NaN. `field_key` is one of σ_total, τ_total, σ1, σ2, σ_vm.
+    """
+    P = PLOT_PALETTE
+    fig, ax = plt.subplots(figsize=(6, 6), facecolor=P["background"])
+    ax.set_facecolor(P["background"])
+    polys = section.polygon_vertices()
+
+    Y, Z = np.meshgrid(ys, zs)
+    half = sig / 2.0
+    radius = np.sqrt(half**2 + tau**2)
+    s1 = half + radius
+    s2 = half - radius
+    svm = np.sqrt(np.clip(sig**2 + 3.0 * tau**2, 0, None))
+    arr = {"σ_total": sig, "τ_total": tau,
+           "σ1": s1, "σ2": s2, "σ_vm": svm}.get(field_key, svm)
+
+    finite = np.isfinite(arr)
+    yv, zv, vv = Y[finite], Z[finite], arr[finite]
+
+    cy, cz = section.cy(), section.cz()
+    if vv.size < 4:
+        ax.text(0.5, 0.5, "Insufficient FEM field points",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=11, color=P["text"])
+        return fig
+
+    triang = mtri.Triangulation(yv, zv)
+    # Mask triangles whose centroid falls outside the section — cleanly
+    # excludes voids (e.g. tube bore) that a Delaunay would otherwise bridge.
+    tcy = yv[triang.triangles].mean(axis=1)
+    tcz = zv[triang.triangles].mean(axis=1)
+    triang.set_mask(np.array([
+        not _point_in_section(a, b, polys) for a, b in zip(tcy, tcz)
+    ]))
+
+    vmin, vmax = float(np.nanmin(vv)), float(np.nanmax(vv))
+    span = vmax - vmin
+    is_uniform = span < 1e-8 or span / max(abs(vmin), abs(vmax), 1e-6) < 1e-6
+    uniform_val = (vmin + vmax) / 2
+
+    if is_uniform:
+        cmap = plt.get_cmap(P["contour_cmap"])
+        for poly in polys[:1]:
+            ax.add_patch(MplPolygon(poly, closed=True, facecolor=cmap(0.5),
+                                    edgecolor=P["section_edge"], linewidth=2,
+                                    zorder=2, alpha=0.85))
+        for hole in polys[1:]:
+            ax.add_patch(MplPolygon(hole, closed=True, facecolor="white",
+                                    edgecolor=P["section_edge"], linewidth=2,
+                                    zorder=3))
+    else:
+        levels = np.linspace(vmin, vmax, 9)
+        cf = ax.tricontourf(triang, vv, levels=levels,
+                            cmap=P["contour_cmap"], vmin=vmin, vmax=vmax)
+        ax.tricontour(triang, vv, levels=levels, colors="white",
+                      linewidths=0.5, alpha=0.6)
+        cb = fig.colorbar(cf, ax=ax, fraction=0.04, pad=0.04)
+        cb.set_label(f"{field_key}  (ksi)", fontsize=9, color=P["text"])
+        cb.ax.tick_params(labelsize=8, colors=P["text"])
+
+    for poly in polys[:1]:
+        ax.add_patch(MplPolygon(poly, closed=True, fill=False,
+                                edgecolor=P["section_edge"], linewidth=2.0,
+                                zorder=8))
+    for hole in polys[1:]:
+        ax.add_patch(MplPolygon(hole, closed=True, fill=False,
+                                edgecolor=P["section_edge"], linewidth=2.0,
+                                zorder=8))
+
+    pad = max(cy, cz) * 0.45
+    ax.set_xlim(-cy - pad, cy + pad)
+    ax.set_ylim(-cz - pad, cz + pad)
+    ax.set_xlabel("y  (in)", fontsize=9, color=P["text"])
+    ax.set_ylabel("z  (in)", fontsize=9, color=P["text"])
+    ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(labelsize=8, colors=P["tick"])
+    for sp in ax.spines.values():
+        sp.set_edgecolor(P["spine"])
+
+    uniform_suffix = f"  |  Uniform: {uniform_val:.4f} ksi" if is_uniform else ""
+    ax.set_title(f"{field_key} field (FEM)  —  {section.name}{uniform_suffix}",
+                 fontsize=9, color=P["text"], pad=8)
+    fig.tight_layout()
+    return fig
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Polygon densification and distance helpers
 # ──────────────────────────────────────────────────────────────────────────

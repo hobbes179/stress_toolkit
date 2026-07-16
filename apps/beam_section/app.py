@@ -29,7 +29,9 @@ from apps.beam_section.calculations import (
     neutral_axis_angle_deg, shear_center, induced_torsion,
     warping_characteristic_length, fem_mesh_size_for, governing_summary,
 )
-from apps.beam_section.plotting import draw_section, draw_contour, draw_fem_mesh
+from apps.beam_section.plotting import (
+    draw_section, draw_contour, draw_report_contour, draw_fem_mesh,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -776,9 +778,17 @@ def render() -> None:
                 rlabel = st.radio(
                     "Field", ["σ_total", "σ_vm", "σ1", "σ2", "τ_total"],
                     horizontal=True, key="report_field")
-                fig_con = draw_contour(section, loads, rlabel)
+                # Render from the SAME cached FEM field as the interactive view
+                # (cache hit → instant) so shear varies correctly rather than
+                # showing the legacy uniform VQ/It value.
+                ys_r, zs_r, sig_r, tau_r = _cached_stress_field(
+                    section_key, loads_key, mesh_scale, 160, section, loads)
+                fig_con = draw_report_contour(
+                    section, ys_r, zs_r, sig_r, tau_r, rlabel)
                 st.pyplot(fig_con, use_container_width=True)
                 plt.close(fig_con)
+                st.caption("Print-quality figure from the FEM elasticity field "
+                           "— matches the interactive contour above.")
         else:
             # FEM backend absent → matplotlib fallback (shear approximate).
             _FIELD_KEYS = {"Max Principal (σ₁)": "σ1", "Min Principal (σ₂)": "σ2",

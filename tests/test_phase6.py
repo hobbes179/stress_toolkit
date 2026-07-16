@@ -180,3 +180,27 @@ def test_governing_summary_handles_all_infinite_margins():
     df_ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, Loads())
     min_ms, check, loc = governing_summary(df, df_ms)
     assert min_ms == 999.0 and check == "—" and loc == "—"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Report (matplotlib print) contour must use the FEM field — not the legacy
+# uniform VQ/It shear (the whole reason the report figure looked "wrong").
+# ──────────────────────────────────────────────────────────────────────────
+def test_report_contour_shear_field_varies_unlike_legacy():
+    import matplotlib.pyplot as plt
+    from apps.beam_section.plotting import draw_contour, draw_report_contour
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    loads = Loads(Vz=2000)
+
+    # Legacy path: τ is a single section-level constant ⇒ uniform flat fill,
+    # which renders with NO colorbar (a single axes).
+    fig_old = draw_contour(sec, loads, "τ_total")
+    assert len(fig_old.axes) == 1
+    plt.close(fig_old)
+
+    # FEM-field report contour: τ genuinely varies ⇒ filled contour WITH a
+    # colorbar (an extra axes).
+    ys, zs, sig, tau = compute_stress_field(sec, loads, 1.0, 100)
+    fig_new = draw_report_contour(sec, ys, zs, sig, tau, "τ_total")
+    assert len(fig_new.axes) >= 2
+    plt.close(fig_new)
