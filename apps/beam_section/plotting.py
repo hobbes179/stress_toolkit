@@ -161,11 +161,19 @@ def _is_clockwise(verts: np.ndarray) -> bool:
 # ──────────────────────────────────────────────────────────────────────────
 # Stress field at arbitrary (y, z) point
 # ──────────────────────────────────────────────────────────────────────────
-def _stress_at(section: Section, loads, y: float, z: float) -> dict:
-    """Compute σ₁, σ₂, σ_vm, τ_total, σ_total at a single (y, z)."""
+def _stress_at(section: Section, loads, y: float, z: float,
+               iyz: float | None = None) -> dict:
+    """
+    Compute σ₁, σ₂, σ_vm, τ_total, σ_total at a single (y, z).
+
+    `iyz` (product of inertia) may be passed in precomputed — draw_contour
+    does this once for the whole field rather than re-running the Green's-
+    theorem integral at every grid node.
+    """
     A   = section.area()
     Iy  = section.Iy()
     Iz  = section.Iz()
+    Iyz = section.Iyz() if iyz is None else iyz
     Qy  = section.Qy()
     Qz  = section.Qz()
     tw_y = section.tw_y()
@@ -173,8 +181,15 @@ def _stress_at(section: Section, loads, y: float, z: float) -> dict:
     tau_T = section.tau_T(loads.T)
 
     sa = loads.P / A / 1000 if A > 0 else 0.0
-    sb = ((loads.My * z / Iy if Iy > 0 else 0.0) +
-          (loads.Mz * y / Iz if Iz > 0 else 0.0)) / 1000
+    # Unsymmetric-bending tensor (design handoff §3.1) — identical to
+    # apps/beam_section/calculations.py::calc_stress_at_points.
+    Delta = Iy * Iz - Iyz**2
+    if Delta > 0:
+        c_z = (loads.My * Iz - loads.Mz * Iyz) / Delta
+        c_y = (loads.Mz * Iy - loads.My * Iyz) / Delta
+        sb = (c_z * z + c_y * y) / 1000
+    else:
+        sb = 0.0
     sn = sa + sb
 
     tvy = loads.Vy * Qy / (Iy * tw_y) / 1000 if (Iy > 0 and tw_y > 0) else 0.0
@@ -300,8 +315,10 @@ def draw_contour(
     triang.set_mask(mask)
 
     # ── Step 5: stress at each node ──────────────────────────────────────
+    # Product of inertia is geometry-only — compute once, not per node.
+    iyz = section.Iyz()
     field_values = np.array([
-        _stress_at(section, loads, y, z)[field_key]
+        _stress_at(section, loads, y, z, iyz=iyz)[field_key]
         for y, z in zip(all_y, all_z)
     ])
 

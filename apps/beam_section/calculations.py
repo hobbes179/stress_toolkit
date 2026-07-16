@@ -52,11 +52,19 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
     A   = section.area()
     Iy  = section.Iy()
     Iz  = section.Iz()
+    Iyz = section.Iyz()               # product of inertia (0 for symmetric shapes)
     Qy  = section.Qy()
     Qz  = section.Qz()
     tw_y = section.tw_y()
     tw_z = section.tw_z()
     tau_T = section.tau_T(loads.T)   # section-level max torsion stress (ksi)
+
+    # Unsymmetric-bending tensor coefficients (design handoff §3.1):
+    #   σ_bend = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ,  Δ = Iy·Iz − Iyz²
+    # Reduces to My·z/Iy + Mz·y/Iz when Iyz = 0 (verified in tests).
+    Delta = Iy * Iz - Iyz**2
+    c_z = (loads.My * Iz - loads.Mz * Iyz) / Delta if Delta > 0 else 0.0  # coeff of z
+    c_y = (loads.Mz * Iy - loads.My * Iyz) / Delta if Delta > 0 else 0.0  # coeff of y
 
     kps = section.key_points(loads.My, loads.Mz)
     rows = []
@@ -64,8 +72,7 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
     for kp in kps:
         # Normal stresses (convert lb/in² → ksi via /1000)
         sa  = loads.P / A / 1000 if A > 0 else 0.0
-        sb  = ((loads.My * kp.z / Iy if Iy > 0 else 0.0) +
-               (loads.Mz * kp.y / Iz if Iz > 0 else 0.0)) / 1000
+        sb  = (c_z * kp.z + c_y * kp.y) / 1000
         sn  = sa + sb
 
         # Shear stresses
@@ -282,3 +289,32 @@ def find_governing(df_stress: pd.DataFrame) -> list[GoverningStress]:
             unit        = "ksi",
         ))
     return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Neutral axis (bending-only locus σ_bend = 0), design handoff §3.1
+# ──────────────────────────────────────────────────────────────────────────
+def neutral_axis_angle_deg(section: Section, loads: Loads) -> float | None:
+    """
+    Angle of the bending neutral axis, in degrees measured CCW from the +Y
+    axis. The neutral axis is the locus σ_bend = 0 (axial excluded), i.e.
+    the line c_z·z + c_y·y = 0 using the §3.1 tensor coefficients.
+
+    For a symmetric section under pure My this is 0° (horizontal, along Y).
+    A nonzero product of inertia (L, Z) rotates it away from the geometric
+    axis — the visible signature of unsymmetric bending, for the Phase 6
+    plot overlay. Returns None when there is no bending (no defined axis)
+    or the section is degenerate.
+    """
+    Iy = section.Iy()
+    Iz = section.Iz()
+    Iyz = section.Iyz()
+    Delta = Iy * Iz - Iyz**2
+    if Delta <= 0:
+        return None
+    c_z = (loads.My * Iz - loads.Mz * Iyz) / Delta
+    c_y = (loads.Mz * Iy - loads.My * Iyz) / Delta
+    if abs(c_y) < 1e-20 and abs(c_z) < 1e-20:
+        return None
+    # Line c_z·z + c_y·y = 0 → direction (dy, dz) ∝ (c_z, −c_y).
+    return math.degrees(math.atan2(-c_y, c_z))

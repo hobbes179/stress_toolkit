@@ -23,6 +23,7 @@ from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
 
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
+    neutral_axis_angle_deg,
 )
 from apps.beam_section.plotting import draw_section, draw_contour
 
@@ -45,8 +46,11 @@ FORMULAE = [
      None),
 
     ("Bending Normal Stress",
-     "σ_bend = (My·z)/Iy + (Mz·y)/Iz",
-     "Flexure formula. Bending axes through centroid.",
+     "σ_bend = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ,  Δ = Iy·Iz − Iyz²",
+     "Unsymmetric-bending tensor. Accounts for the product of inertia Iyz "
+     "exactly, so L and Z sections are valid with no geometric-axis "
+     "constraint assumption. Reduces to (My·z)/Iy + (Mz·y)/Iz when Iyz = 0 "
+     "(symmetric sections).",
      None),
 
     ("Total Normal Stress",
@@ -384,16 +388,23 @@ def render() -> None:
             info_card(label, f"{val:,.1f}", unit, value_color=value_color)
 
         section_header("Section Properties")
+        iyz_val = section.Iyz()
         for label, val, unit in [
-            ("A",  section.area(),      "in²"),
-            ("Iy", section.Iy(),        "in⁴"),
-            ("Iz", section.Iz(),        "in⁴"),
-            ("J",  section.J_torsion(), "in⁴"),
-            ("Sy", section.Sy(),        "in³"),
-            ("Sz", section.Sz(),        "in³"),
-            ("f",  section.effective_f_cozzone, "shape factor"),
+            ("A",   section.area(),      "in²"),
+            ("Iy",  section.Iy(),        "in⁴"),
+            ("Iz",  section.Iz(),        "in⁴"),
+            ("Iyz", iyz_val,             "in⁴"),
+            ("J",   section.J_torsion(), "in⁴"),
+            ("Sy",  section.Sy(),        "in³"),
+            ("Sz",  section.Sz(),        "in³"),
+            ("f",   section.effective_f_cozzone, "shape factor"),
         ]:
             info_card(label, f"{val:.2f}", unit)
+        if abs(iyz_val) > 1e-4:
+            na_angle = neutral_axis_angle_deg(section, loads)
+            if na_angle is not None:
+                info_card("NA angle", f"{na_angle:.1f}", "deg",
+                          sub="neutral axis vs +Y (unsymmetric bending)")
         if cozzone_gated:
             st.caption(
                 f"f = 1.0 (plastic bending gated pending crippling check — "
@@ -507,8 +518,8 @@ def render() -> None:
             f"Showing formulae applicable to <b>{shape_name}</b>. "
             "Ref: MMPDS-01 §1.3, Roark's Formulas for Stress &amp; Strain, "
             "Timoshenko &amp; Goodier Theory of Elasticity. "
-            "Bending evaluated on geometric axes (valid when section is "
-            "constrained by adjacent structure)."
+            "Bending uses the full unsymmetric-bending tensor — valid for "
+            "unsymmetric sections (L, Z) without any constraint assumption."
             "</p>",
             unsafe_allow_html=True,
         )

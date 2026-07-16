@@ -68,6 +68,11 @@ import math
 
 import numpy as np
 
+from library.shapes.geometry import (
+    SectionGeometry, MidlineSegment, ensure_ccw, ensure_cw,
+)
+from library.analysis.polygon_props import PolygonProps, polygon_section_props
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # KeyPoint — a labelled location where stresses are evaluated.
@@ -206,6 +211,46 @@ class Section:
         if self.is_open_section and self.is_thin_walled:
             return 1.0
         return self.f_cozzone
+
+    # ── Geometry / polygon-derived properties (Phase 1) ──────────────────
+    def geometry(self) -> SectionGeometry:
+        """
+        Build the shape's SectionGeometry (design handoff §2.1).
+
+        Default implementation derives the outer boundary and voids from
+        `polygon_vertices()` (loop 0 = outer, remaining loops = voids),
+        normalizing winding to the CCW-outer / CW-void convention. Solids
+        and Phase-1 thin-walled shapes leave the midline skeleton empty;
+        thin-walled catalog shapes override this in Phase 2 to populate
+        nodes/segments/cells.
+        """
+        loops = self.polygon_vertices()
+        if not loops:
+            return SectionGeometry(outer=np.zeros((0, 2)),
+                                   is_thin_walled=self.is_thin_walled)
+        outer = ensure_ccw(loops[0])
+        voids = tuple(ensure_cw(loop) for loop in loops[1:])
+        return SectionGeometry(outer=outer, voids=voids,
+                               is_thin_walled=self.is_thin_walled)
+
+    def section_props(self) -> PolygonProps:
+        """
+        Centroidal section properties computed from the polygon via Green's
+        theorem. Used for the product of inertia (`Iyz`), principal axes,
+        and as the cross-check against each shape's closed-form A/Iy/Iz
+        (validation gate — see tests/test_phase1.py).
+        """
+        g = self.geometry()
+        return polygon_section_props(g.outer, g.voids)
+
+    def Iyz(self) -> float:
+        """
+        Product of inertia about the centroidal axes, ∫y·z dA, from the
+        section polygon. Zero (to numerical precision) for any section with
+        an axis of symmetry; nonzero for L and Z. Feeds the unsymmetric-
+        bending tensor in calculations.py (design handoff §3.1).
+        """
+        return self.section_props().Iyz
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -918,11 +963,11 @@ class LBeam(Section):
     L-beam / angle. D1=b (horizontal leg width), D2=h (vertical leg height),
     D3=t_b (horiz leg thickness), D4=t_h (vert leg thickness).
 
-    ⚠️ ASSUMPTION: bending stress is computed about the geometric Y and Z
-    axes. Strictly, an L-section has principal axes rotated from these and a
-    nonzero product of inertia Iyz. This is valid only when the member is
-    constrained by adjacent structure (e.g. attached to skin/web by
-    fasteners) that suppresses bending about the principal axes.
+    Bending uses the full unsymmetric-bending tensor (design handoff §3.1),
+    so the nonzero product of inertia Iyz is accounted for exactly — no
+    geometric-axis constraint assumption is required (Phase 1, CHANGELOG).
+    Iyz is computed from the section polygon via Green's theorem
+    (Section.Iyz / library.analysis.polygon_props).
     """
 
     name = "L-Beam / Angle"
@@ -1137,9 +1182,10 @@ class ZBeam(Section):
     D3=t_f (flange thickness), D4=t_w (web thickness).
     Top flange extends in +Y, bottom flange in -Y.
 
-    ⚠️ ASSUMPTION: bending is computed about geometric axes. Z-section's
-    principal axes are rotated from these. Valid only when section is
-    constrained to bend about geometric axes by adjacent structure.
+    Bending uses the full unsymmetric-bending tensor (design handoff §3.1),
+    so the nonzero product of inertia Iyz is accounted for exactly — no
+    geometric-axis constraint assumption is required (Phase 1, CHANGELOG).
+    Iyz is computed from the section polygon via Green's theorem.
     """
 
     name = "Z-Beam"
@@ -1170,7 +1216,15 @@ class ZBeam(Section):
 
     def Iz(self):
         bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
-        return 2 * tf * bf**3 / 12 + (d - 2 * tf) * tw**3 / 12
+        # Z-section flange centroids are offset in Y (top flange +Y, bottom
+        # −Y), so each flange carries a parallel-axis term A·y_c². The v1
+        # closed form omitted this (used only tf·bf³/12), underestimating Iz
+        # ~3.5× at default dims — caught by the Phase 1 polygon validation
+        # gate; see CHANGELOG.md. y_c = (bf − tw)/2 = flange midline offset.
+        y_c = bf / 2 - tw / 2
+        flanges = 2 * (tf * bf**3 / 12 + bf * tf * y_c**2)
+        web = (d - 2 * tf) * tw**3 / 12
+        return flanges + web
 
     def J_torsion(self):
         bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
@@ -1257,15 +1311,21 @@ class PlusCross(Section):
 
     def Iy(self):
         b, h, th, tv = self.d1, self.d2, self.d3, self.d4
-        # Horiz bar: b·th³/12 about Y; vert bar: two webs above/below center
+        # Horizontal bar about Y: b·th³/12. Vertical arms above & below the
+        # horizontal bar span z ∈ [th/2, h/2]; each contributes
+        # ∫z²·tv dz = tv·[(h/2)³ − (th/2)³]/3. The v1 form used
+        # (h/2 − th/2)³ (wrong integral limits), over-predicting bending
+        # stress — caught by the Phase 1 polygon validation gate; see
+        # CHANGELOG.md.
         I_horiz = b * th**3 / 12
-        I_vert = 2 * (tv * (h/2 - th/2)**3 / 3)  # parallel-axis form
+        I_vert = 2 * tv * ((h/2)**3 - (th/2)**3) / 3
         return I_horiz + I_vert
 
     def Iz(self):
         b, h, th, tv = self.d1, self.d2, self.d3, self.d4
+        # Same correction as Iy, on the horizontal arms about Z.
         I_vert = h * tv**3 / 12
-        I_horiz = 2 * (th * (b/2 - tv/2)**3 / 3)
+        I_horiz = 2 * th * ((b/2)**3 - (tv/2)**3) / 3
         return I_vert + I_horiz
 
     def J_torsion(self):

@@ -7,6 +7,92 @@ commit adds an entry to this file.**
 
 ---
 
+## Phase 1 — PolygonProperties engine & unsymmetric bending (unreleased)
+
+Introduces the v2 geometry/analysis separation (design handoff §2) and
+replaces the geometric-axis bending assumption with the full unsymmetric-
+bending tensor (§3.1). No release tag yet — intermediate v2 phases are not
+tagged as releases (only Phase 7 → v2.0.0). `CLAUDE.md` still describes the
+pre-v2 architecture; its rewrite is scoped to Phase 7.
+
+### 1. Normal-stress bending: geometric-axis formula → unsymmetric tensor
+
+**Before:** `σ_bend = My·z/Iy + Mz·y/Iz` — implicitly assumes the product
+of inertia `Iyz = 0`, valid only for sections with an axis of symmetry.
+L-beam and Z-beam carried a `⚠️ ASSUMPTION` caveat that their results were
+only trustworthy when adjacent structure constrained bending to the
+geometric axes.
+
+**After:**
+`σ_bend = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ`, `Δ = Iy·Iz − Iyz²`.
+
+**Why:** The tensor form accounts for `Iyz` exactly, so L and Z sections are
+now valid with no constraint assumption. It reduces to the v1 formula when
+`Iyz = 0` (unit-tested to machine precision), so every symmetric shape is
+numerically unchanged. The `⚠️ ASSUMPTION` docstrings (L-beam, Z-beam) and
+the "bending evaluated on geometric axes" UI caption are removed; the UI
+Formulas tab now shows the tensor form.
+
+**Location:** `apps/beam_section/calculations.py::calc_stress_at_points`,
+`apps/beam_section/plotting.py::_stress_at` (contour evaluator, kept in
+sync), `library/shapes/shapes.py` (L/Z docstrings), `apps/beam_section/
+app.py` (Formulas tab + caption).
+
+### 2. Product of inertia `Iyz` now computed (was implicitly zero)
+
+**Added:** `Section.Iyz()` (and `Section.geometry()` / `Section.
+section_props()`) compute `Iyz`, principal axes, and radii of gyration from
+the section polygon via Green's theorem
+(`library/analysis/polygon_props.py`). Symmetric shapes return ~0 (to
+numerical precision); L and Z return their true nonzero product of inertia,
+which now feeds the bending tensor above. `Iyz` and, for unsymmetric
+sections, the neutral-axis angle are surfaced in the Section Properties
+panel.
+
+**Why:** Required by §3.1. Also enables the neutral-axis overlay (§3.1,
+rendered in Phase 6) via `calculations.neutral_axis_angle_deg`.
+
+### 3. Two latent v1 section-property bugs fixed (caught by the Phase 1 gate)
+
+The Phase 1 validation gate — "polygon-derived A/Iy/Iz must match each
+shape's closed form ≤ 0.1%" — surfaced two closed-form errors that had been
+silently producing wrong bending stress. The polygon values are correct;
+the closed forms were fixed to match.
+
+- **Z-Beam `Iz`** omitted the flange parallel-axis term. A Z-section's
+  flanges are offset in Y (top +Y, bottom −Y), so each requires `A·y_c²`
+  with `y_c = (bf − tw)/2`. The v1 form used only `2·tf·bf³/12`,
+  underestimating `Iz` by ~3.5× at default dims (1.694 → 5.948 in⁴). This
+  had **over-predicted** Mz-bending stress on Z-sections (conservative, but
+  wrong).
+- **Plus/Cross `Iy` and `Iz`** used the wrong integral limits for the arm
+  bands: `(h/2 − th/2)³` instead of `(h/2)³ − (th/2)³`. At default dims
+  1.828 → 2.703 in⁴. Also over-predicted bending stress.
+
+**Impact:** bending stress and margins change for the Z-Beam and Plus/Cross
+shapes only. All other shapes' A/Iy/Iz already matched their polygons to
+≤ 0.1% (analytic shapes to machine precision; circle/ellipse/tubes within
+discretization error).
+
+**Location:** `library/shapes/shapes.py::ZBeam.Iz`,
+`library/shapes/shapes.py::PlusCross.Iy` / `PlusCross.Iz`.
+
+### New modules / tests
+
+- `library/analysis/polygon_props.py` — Green's-theorem section properties
+  (A, centroid, Iy, Iz, Iyz, principal moments/angle, radii of gyration).
+- `library/shapes/geometry.py` — `SectionGeometry` + `MidlineSegment`
+  containers (midline skeleton fields present but unpopulated until
+  Phase 2) and winding helpers.
+- `tests/golden_values.py` — shared analytic golden module (pytest now; the
+  in-app Validation page in Phase 7).
+- `tests/test_phase1.py` — analytic property goldens (rectangle, offset-
+  rectangle Iyz, 45°-rotated principal-axis recovery), tensor-bending
+  reduction, L-section rotated-neutral-axis check, and the polygon-vs-
+  closed-form gate for all 11 shapes.
+
+---
+
 ## v1.1.0 — Phase 0 safety patch (unreleased on `main` until tagged)
 
 This release is a stopgap. It corrects two unconservative defects in the v1

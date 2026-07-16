@@ -12,9 +12,11 @@ from library.shapes.shapes import (
     IBeam, TBeam, LBeam, CBeam, ZBeam,
     PlusCross,
 )
+from library.shapes.geometry import SectionGeometry, MidlineSegment
 
 __all__ = [
     "Section", "KeyPoint", "SHAPE_REGISTRY", "SHAPE_NAMES", "make_section",
+    "SectionGeometry", "MidlineSegment",
     "Rectangle", "Circle", "Ellipse",
     "RectTube", "CircularTube",
     "IBeam", "TBeam", "LBeam", "CBeam", "ZBeam",
