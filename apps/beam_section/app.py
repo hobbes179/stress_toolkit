@@ -23,7 +23,7 @@ from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
 
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
-    neutral_axis_angle_deg,
+    neutral_axis_angle_deg, shear_center,
 )
 from apps.beam_section.plotting import draw_section, draw_contour
 
@@ -37,6 +37,10 @@ from apps.beam_section.plotting import draw_section, draw_contour
 _OPEN_SECTIONS = frozenset({
     "I-Beam / W-Shape", "T-Beam", "L-Beam / Angle",
     "C-Beam / Channel", "Z-Beam", "Plus / Cross",
+})
+_SOLID_CLOSED = frozenset({
+    "Rectangle", "Circle", "Ellipse",
+    "Rect Tube (HSS)", "Circular Tube",
 })
 
 FORMULAE = [
@@ -58,15 +62,18 @@ FORMULAE = [
      "Superposition. Linear-elastic, small deformation.",
      None),
 
-    ("Shear — Vy",
-     "τ_Vy = Vy·Q_y / (Iy·t_w)",
-     "VQ/It. Q = 1st moment of area above neutral axis.",
-     None),
+    ("Transverse Shear — open sections (midline shear flow)",
+     "q(s) = −[(Vy·Iy − Vz·Iyz)·∫y·t ds + (Vz·Iz − Vy·Iyz)·∫z·t ds] / Δ,   τ_V = q/t",
+     "Bruhn open-section shear flow, integrated from a free edge along the "
+     "wall midline. Correct axis pairing Vy↔(Iz,∫y), Vz↔(Iy,∫z); includes "
+     "the product of inertia Iyz. Reduces to −Vy·Qz/Iz − Vz·Qy/Iy when Iyz=0.",
+     _OPEN_SECTIONS),
 
-    ("Shear — Vz",
-     "τ_Vz = Vz·Q_z / (Iz·t_w)",
-     "Analogous for horizontal shear about Z axis.",
-     None),
+    ("Transverse Shear — solids / tubes (VQ/It)",
+     "τ_V = V·Q / (I·t)",
+     "First-moment (VQ/It) form. NOTE: still on the legacy axis pairing — "
+     "corrected for these shapes in Phase 3 (ExactSolid / closed-cell solvers).",
+     _SOLID_CLOSED),
 
     ("Torsion — Rect Tube (Bredt-Batho)",
      "τ_T = T / (2·Am·t_min)",
@@ -99,13 +106,18 @@ FORMULAE = [
      "Torsion is excluded for all open thin-walled sections.",
      _OPEN_SECTIONS),
 
-    ("Total Shear (interim, v1.1.0)",
-     "τ_wall = √(τ_Vy² + τ_Vz²) + |τ_T|",
-     "Transverse and torsional shear are collinear along a wall segment — "
-     "combined algebraically, not by RSS (RSS under-predicts up to ~29% "
-     "when components are equal; see CHANGELOG.md). This is the conservative "
-     "interim form; exact per-wall-point combination lands in a later phase.",
-     None),
+    ("Combined Wall Shear — open sections (§3.3)",
+     "τ_wall = |τ_Vy + τ_Vz| + |τ_T|",
+     "Exact algebraic combination: the two transverse-shear flows share the "
+     "wall tangent (add signed); torsion adds in magnitude. Evaluated per "
+     "point along the midline (design handoff §3.2–3.3).",
+     _OPEN_SECTIONS),
+
+    ("Combined Shear — solids / tubes (interim, v1.1.0)",
+     "τ_total = √(τ_Vy² + τ_Vz²) + |τ_T|",
+     "Conservative interim combination pending the Phase-3 solvers for these "
+     "shapes. Still stricter than RSS, which is unconservative (see CHANGELOG.md).",
+     _SOLID_CLOSED),
 
     ("Principal Stresses",
      "σ₁,₂ = σ/2 ± √[(σ/2)² + τ²]",
@@ -410,6 +422,16 @@ def render() -> None:
                 f"f = 1.0 (plastic bending gated pending crippling check — "
                 f"table value {section.f_cozzone:.2f} not used)"
             )
+
+        sc = shear_center(section)
+        if sc is not None:
+            info_card("SC", f"({sc[0]:.3f}, {sc[1]:.3f})", "in",
+                      sub="shear center (y, z) from centroid")
+            if abs(sc[0]) > 1e-3 or abs(sc[1]) > 1e-3:
+                st.caption(
+                    "Transverse shear applied through the centroid induces "
+                    "torsion about the shear center — see §3.4 (Phase 3)."
+                )
 
     # ── 03 — Stress Results ───────────────────────────────────────────────
     section_header("Stress Results at Key Points", number="03",

@@ -7,6 +7,105 @@ commit adds an entry to this file.**
 
 ---
 
+## Phase 2 — Classical midline solver, open sections (unreleased)
+
+Builds the Bruhn-style midline shear-flow solver for open thin-walled
+sections (design handoff §2.3, §3.2–3.3, §3.8) and routes those shapes
+through it. This corrects a significant v1 transverse-shear defect and
+replaces the Phase-0 interim shear combination with the exact algebraic one
+for open sections. Committed in two parts: `2A` (skeleton geometry,
+`a347cd7`) and `2B` (the solver + integration).
+
+### 1. v1 transverse-shear axis mix-up (the finding §3.2 asked us to record)
+
+**Finding:** the v1 shear code paired the loads with the wrong axes. In
+`calc_stress_at_points` it computed `τ_Vy = Vy·Qy/(Iy·tw_y)` and
+`τ_Vz = Vz·Qz/(Iz·tw_z)`, where each shape's `Qy`/`tw_y` are the *vertical*-
+shear first moment / width and `Qz`/`tw_z` the *horizontal*-shear ones. The
+physically correct pairing (Megson/Bruhn) is **Vy ↔ (Iz, ∫y dA)** and
+**Vz ↔ (Iy, ∫z dA)**. v1 had them swapped: vertical shear `Vz` was resolved
+with the weak-axis `Iz` and the horizontal-shear `Q`, and vice-versa.
+
+**Why it went unnoticed:** on the rectangle and circle the two directions
+give the same `1.5·V/A` (or tube equivalent), so the error is invisible
+there. It only bites shapes with `Iy ≠ Iz` and distinct directional `Q` —
+I, C, T, Z, L (and, on the still-legacy path, the ellipse and rect tube).
+
+**Impact (example):** default I-beam under `Vz` (the app's default load)
+computed web-NA shear ~**34% low** (0.499 vs 0.759 ksi at Vz=1000) — an
+unconservative error at the governing shear point. Fixed for open sections
+by the new solver (below); solids/tubes are corrected in Phase 3.
+
+### 2. Open-section transverse shear via the classical midline solver
+
+`library/analysis/solvers.py` — `ClassicalMidlineSolver` and supporting
+functions integrate the general open-section shear flow along the wall
+midline (design handoff §3.2):
+
+    q(s) = −[(Vy·Iy − Vz·Iyz)·∫y·t ds + (Vz·Iz − Vy·Iyz)·∫z·t ds] / Δ
+
+from a free edge, summing branch flows at junctions (tree topology). This
+uses the correct axis pairing and includes the product of inertia `Iyz`
+(so it composes with the Phase-1 unsymmetric-bending path). `τ_V = q/t` is
+now evaluated **per point** along the wall, retiring v1's single
+max-Q-everywhere value (design handoff §3.2, §3.8).
+
+### 3. Algebraic shear combination for open sections (retires the interim)
+
+For open sections the Phase-0 interim combination
+`√(τ_Vy²+τ_Vz²)+|τ_T|` is replaced by the exact §3.3 rule
+`τ_wall = |τ_Vy + τ_Vz| + |τ_T|` — the two transverse flows share the wall
+tangent and add signed; torsion adds in magnitude. Solids and closed tubes
+keep the interim combination until Phase 3.
+
+### 4. Shear center now computed (open sections)
+
+`calculations.shear_center()` returns the shear center (y_sc, z_sc) from the
+moment of the shear-flow distribution about the centroid (design handoff
+§3.2). Verified against goldens: I-beam / Plus / Z at the centroid, T on its
+axis of symmetry, and a uniform-thickness channel matching
+`e = 3b²/(h+6b)` to <3%. Displayed in the Section Properties panel. This is
+the prerequisite for the §3.4 induced-torsion input (Phase 3).
+
+### 5. Open-section St-Venant torsion (engine) + evaluation-point scheme
+
+- The solver provides `J = Σ Lᵢ·tᵢ³/3` and per-segment `τ_T = T·t/J`. The
+  engine now applies open-section torsion per wall thickness. **The UI
+  torsion input remains locked to zero for open sections** until the Phase-3
+  warping screen (§3.5) lands — St-Venant-only torsion can be unconservative
+  for short restrained members, so it is not exposed without the screen.
+- Evaluation set (design handoff §3.8): open thin-walled sections are now
+  evaluated at the midline segment endpoints and midpoints **in addition to**
+  the legacy named `key_points()` (deduplicated), so the true governing
+  shear location — often mid-flange, which the named KPs miss — is captured.
+
+### Scope note (still on the legacy path until Phase 3)
+
+Solids (Rectangle, Circle, Ellipse) and closed tubes (Rect Tube, Circular
+Tube) still use the VQ/It shear path with the interim combination — and thus
+still carry the v1 axis pairing described in item 1. They are corrected by
+the ExactSolidSolver and closed-cell (Bredt) solver in Phase 3. The
+contour-plot shear field (`plotting._stress_at`) likewise remains on the
+legacy path pending the Phase-6 plotting overhaul; the governing numbers in
+the results table use the solver.
+
+### New / changed
+
+- `library/analysis/solvers.py` (new) — SectionSolver protocol,
+  SolverResult, ClassicalMidlineSolver, shear-flow / shear-center / open-J
+  functions.
+- `library/shapes/shapes.py` — `Section._midline()` skeletons for I, T, L,
+  C, Z, Plus (2A); `library/shapes/geometry.py` point-in-polygon helpers.
+- `apps/beam_section/calculations.py` — `_build_eval_points`, solver routing
+  in `calc_stress_at_points`, `shear_center()`.
+- `apps/beam_section/app.py` — shape-aware shear formulas, shear-center
+  display.
+- Tests: `tests/test_phase2a.py` (skeleton geometry gate, 24),
+  `tests/test_phase2b.py` (solver goldens — shear centers, channel
+  `e=3b²/(h+6b)`, I-beam τ profile vs VQ/It, 9).
+
+---
+
 ## Phase 1 — PolygonProperties engine & unsymmetric bending (unreleased)
 
 Introduces the v2 geometry/analysis separation (design handoff §2) and

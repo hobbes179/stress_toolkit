@@ -20,6 +20,9 @@ import pandas as pd
 
 from library.shapes import Section, KeyPoint
 from library.materials import Material
+from library.analysis.solvers import (
+    classical_shear_flow_at, classical_J_open, classical_shear_center,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -39,55 +42,128 @@ class Loads:
 # ──────────────────────────────────────────────────────────────────────────
 # Per-key-point stress calculation
 # ──────────────────────────────────────────────────────────────────────────
+def _build_eval_points(section: Section, loads: Loads):
+    """
+    Evaluation-point set (design handoff §3.8): the legacy named key_points
+    plus — for open thin-walled sections — the midline segment endpoints and
+    midpoints, so the true governing shear location (often mid-flange, which
+    the named KPs miss) is captured. Skeleton points that coincide with a
+    named KP are dropped to avoid duplicate rows.
+
+    Returns a list of (id, description, y, z).
+    """
+    kps = section.key_points(loads.My, loads.Mz)
+    pts = [(kp.id, kp.description, float(kp.y), float(kp.z)) for kp in kps]
+
+    geom = section.geometry()
+    if geom.is_thin_walled and geom.nodes is not None:
+        size = max(section.cy(), section.cz(), 1.0)
+        tol = 1e-4 * size
+
+        def _is_new(y, z):
+            return all((abs(y - py) > tol or abs(z - pz) > tol)
+                       for _, _, py, pz in pts)
+
+        for i, node in enumerate(geom.nodes):
+            y, z = float(node[0]), float(node[1])
+            if _is_new(y, z):
+                pts.append((f"N{i}", "midline node", y, z))
+        for si, seg in enumerate(geom.segments):
+            mid = (geom.nodes[seg.n1] + geom.nodes[seg.n2]) / 2.0
+            y, z = float(mid[0]), float(mid[1])
+            if _is_new(y, z):
+                pts.append((f"S{si}", "midline midpoint", y, z))
+    return pts
+
+
+def shear_center(section: Section) -> tuple[float, float] | None:
+    """
+    Shear center (y_sc, z_sc) relative to the centroid for open thin-walled
+    sections (classical midline solver). None for solids / closed tubes,
+    whose shear center handling arrives with the Phase 3 solvers.
+    """
+    geom = section.geometry()
+    if not (geom.is_thin_walled and geom.nodes is not None):
+        return None
+    return classical_shear_center(geom, section.section_props())
+
+
 def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
     """
-    Compute the full stress state at each KeyPoint defined by the section.
-
-    Returns a DataFrame with columns:
+    Compute the full stress state at each evaluation point (design handoff
+    §3.8). Returns a DataFrame with columns:
         KP, Description, y, z,
         σ_axial, σ_bend, σ_total,
         τ_Vy, τ_Vz, τ_T, τ_total,
         σ1, σ2, σ_vm
+
+    Shear handling (design handoff §3.2–3.3):
+      • Open thin-walled sections route through the ClassicalMidlineSolver:
+        per-point transverse shear flow (correct Vy↔Iz / Vz↔Iy pairing,
+        including Iyz) and open-section St-Venant torsion, combined
+        ALGEBRAICALLY (collinear along the wall): τ_wall = |τ_Vy+τ_Vz|+|τ_T|.
+      • Solids and closed tubes keep the legacy VQ/It path with the Phase-0
+        interim combination √(τ_Vy²+τ_Vz²)+|τ_T| until Phase 3 (ExactSolid /
+        closed-cell solvers). NOTE: the legacy VQ/It path still carries the
+        v1 transverse-shear axis pairing — see CHANGELOG.md; it is corrected
+        for open sections here and for solids/tubes in Phase 3.
     """
     A   = section.area()
     Iy  = section.Iy()
     Iz  = section.Iz()
     Iyz = section.Iyz()               # product of inertia (0 for symmetric shapes)
-    Qy  = section.Qy()
-    Qz  = section.Qz()
-    tw_y = section.tw_y()
-    tw_z = section.tw_z()
-    tau_T = section.tau_T(loads.T)   # section-level max torsion stress (ksi)
 
     # Unsymmetric-bending tensor coefficients (design handoff §3.1):
     #   σ_bend = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ,  Δ = Iy·Iz − Iyz²
-    # Reduces to My·z/Iy + Mz·y/Iz when Iyz = 0 (verified in tests).
     Delta = Iy * Iz - Iyz**2
     c_z = (loads.My * Iz - loads.Mz * Iyz) / Delta if Delta > 0 else 0.0  # coeff of z
     c_y = (loads.Mz * Iy - loads.My * Iyz) / Delta if Delta > 0 else 0.0  # coeff of y
 
-    kps = section.key_points(loads.My, loads.Mz)
+    eval_pts = _build_eval_points(section, loads)
+    geom = section.geometry()
+    open_thin = geom.is_thin_walled and geom.nodes is not None
+
+    if open_thin:
+        # Per-point shear flow from each transverse component (classical
+        # midline solver); thickness t is the projected wall thickness.
+        props = section.section_props()
+        xy = np.array([[y, z] for _, _, y, z in eval_pts], dtype=float)
+        q_vy, t_w = classical_shear_flow_at(geom, props, loads.Vy, 0.0, xy)
+        q_vz, _   = classical_shear_flow_at(geom, props, 0.0, loads.Vz, xy)
+        J_open = classical_J_open(geom)
+    else:
+        Qy   = section.Qy()
+        Qz   = section.Qz()
+        tw_y = section.tw_y()
+        tw_z = section.tw_z()
+        tau_T_sec = section.tau_T(loads.T)   # section-level max torsion stress (ksi)
+
     rows = []
-
-    for kp in kps:
+    for idx, (kid, desc, y, z) in enumerate(eval_pts):
         # Normal stresses (convert lb/in² → ksi via /1000)
-        sa  = loads.P / A / 1000 if A > 0 else 0.0
-        sb  = (c_z * kp.z + c_y * kp.y) / 1000
-        sn  = sa + sb
+        sa = loads.P / A / 1000 if A > 0 else 0.0
+        sb = (c_z * z + c_y * y) / 1000
+        sn = sa + sb
 
-        # Shear stresses
-        tvy = (loads.Vy * Qy / (Iy * tw_y) / 1000
-               if (Iy > 0 and tw_y > 0) else 0.0)
-        tvz = (loads.Vz * Qz / (Iz * tw_z) / 1000
-               if (Iz > 0 and tw_z > 0) else 0.0)
-        # v2 Phase 0 interim combination (CHANGELOG.md v1.1.0): transverse
-        # and torsional shear are collinear along a wall segment, not
-        # orthogonal — RSS is unconservative. Algebraic combination (exact
-        # per-wall signs) lands in Phase 2/3; this is the conservative
-        # bound used until then.
-        tau_total = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
+        if open_thin:
+            t = t_w[idx]
+            tvy = q_vy[idx] / t / 1000 if t > 0 else 0.0
+            tvz = q_vz[idx] / t / 1000 if t > 0 else 0.0
+            # Open St-Venant surface stress at this wall's local thickness.
+            tau_T = abs(loads.T) * t / J_open / 1000 if J_open > 0 else 0.0
+            # §3.3 algebraic combination — transverse flows share the wall
+            # tangent (add signed), torsion adds in magnitude (conservative).
+            tau_total = abs(tvy + tvz) + abs(tau_T)
+        else:
+            tvy = (loads.Vy * Qy / (Iy * tw_y) / 1000
+                   if (Iy > 0 and tw_y > 0) else 0.0)
+            tvz = (loads.Vz * Qz / (Iz * tw_z) / 1000
+                   if (Iz > 0 and tw_z > 0) else 0.0)
+            tau_T = tau_T_sec
+            # Phase-0 interim combination (CHANGELOG.md v1.1.0) — solids/tubes.
+            tau_total = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
 
-        # Principal stresses (2D state)
+        # Principal stresses (2D plane-stress state)
         half = sn / 2
         radius = math.sqrt(half**2 + tau_total**2)
         s1 = half + radius
@@ -95,10 +171,10 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
         svm = math.sqrt(s1**2 - s1 * s2 + s2**2)
 
         rows.append({
-            "KP":          kp.id,
-            "Description": kp.description,
-            "y":           kp.y,
-            "z":           kp.z,
+            "KP":          kid,
+            "Description": desc,
+            "y":           y,
+            "z":           z,
             "σ_axial":     sa,
             "σ_bend":      sb,
             "σ_total":     sn,
