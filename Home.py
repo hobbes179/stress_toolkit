@@ -102,10 +102,11 @@ for col, (icon, title, desc, page_path) in zip(cols, MODULES):
 
 
 # ── Footer ────────────────────────────────────────────────────────────────
+from version import version_string
 st.divider()
 st.markdown(
     f"<p style='font-size:11px;color:{t.muted};text-align:center;'>"
-    f"Stress Toolkit v0.3 · Built with Python and Streamlit"
+    f"Stress Toolkit {version_string()} · Built with Python and Streamlit"
     f"</p>",
     unsafe_allow_html=True,
 )

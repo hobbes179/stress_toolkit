@@ -999,6 +999,7 @@ def render() -> None:
         _render_validation(section, mesh_scale)
 
     # ── Footer ────────────────────────────────────────────────────────────
+    from version import version_string
     st.divider()
     st.markdown(
         f"<p style='font-family:\"IBM Plex Mono\",monospace;"
@@ -1007,6 +1008,6 @@ def render() -> None:
         f"{shape_name} · {mat_name} · "
         f"SF_y={sf_yield:.2f}  SF_u={sf_ult:.2f} · "
         f"Linear-elastic only · Not for buckling, fatigue, or non-linear analysis"
-        f"</p>",
+        f"<br><b>Stress Toolkit {version_string()}</b></p>",
         unsafe_allow_html=True,
     )
