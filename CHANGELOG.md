@@ -34,7 +34,16 @@ work if convergent corner values are wanted.)
 
 ---
 
-## Phase 7 — Validation page, docs, release (in progress)
+## v2.0.0 — release candidate (2026-07-16)
+
+Completes the Phases 0–7 overhaul: dual solver (classical midline + FEM),
+custom polygon/DXF import, unsymmetric-bending tensor, Bruhn shear flow, the
+§3.6 margin set with the `(Ra+Rb)+Rs²=1` interaction curve, a tabbed UI with
+an interactive FEM stress contour and correct shear field, cache + fragment
+performance, an in-app validation page, and version stamping. 150 tests green.
+Remaining before tagging: a manual Streamlit Cloud / mobile pass.
+
+## Phase 7 — Validation page, docs, release
 
 ### 7.3 — Docs reconciled to v2
 
@@ -70,7 +79,7 @@ page. New `fem_solver.fem_geometric_properties` runs a geometric-only solve
 (no warping) so the 11-shape sweep completes in ~1.3 s instead of paying the
 warping cost 11×.
 
-## Phase 6 — UX / plotting overhaul (in progress, unreleased)
+## Phase 6 — UX / plotting overhaul
 
 ### 6D — Contour overlays + annotated geometry (§6.3)
 
