@@ -4,6 +4,19 @@
 This file provides context for Claude Code (or any AI assistant) working on
 this repository. Read it before making any changes.
 
+> **v2.0 status (2026-07).** The toolkit completed a methodology + UX overhaul
+> (Phases 0–7). The **authoritative record of every results-changing decision
+> is `CHANGELOG.md`** at the repo root; the original v2 design spec lives at
+> `_TrainingData/v2_handoff/V2_DESIGN_HANDOFF.md` (now historical). Where this
+> file conflicts with those two, they win. Key v2 changes vs the original
+> description below: dual solver (classical midline **+** `sectionproperties`
+> FEM), custom polygon/DXF import, unsymmetric-bending tensor (L/Z valid
+> without the geometric-axis assumption), Bruhn midline shear flow, the §3.6
+> margin check set with the `(Ra+Rb)+Rs²=1` interaction curve, a tabbed UI
+> (Geometry | Loads | Results | Margins | Formulas | Validation) with an
+> interactive FEM stress contour, an in-app validation page, and a unified
+> **light** theme. Version is stamped in the page footer (`version.py`).
+
 ---
 
 ## What this project is
@@ -43,7 +56,7 @@ stress_toolkit/
 │   │   ├── materials.py             ← Material dataclass + MATERIALS dict
 │   │   └── README.md                ← Schema + how-to-add docs
 │   └── shapes/
-│       ├── shapes.py                ← Section base class + 13 shape subclasses
+│       ├── shapes.py                ← Section base class + 11 shape subclasses
 │       └── README.md                ← How-to-add-a-shape docs
 ├── ui/
 │   ├── theme.py                     ← Color tokens: THEME, PLOT_PALETTE
@@ -109,16 +122,13 @@ uniform value, instead of a broken colorbar.
 - `pages/N_Name.py` — thin wrapper; sets page config and calls `app.render()`
 - `apps/<module>/app.py` — full UI lives here, imports from library + ui
 
-### 6. Dark mode only (for now)
-Dark mode is the current default and only active theme. Light mode is defined
-in `ui/theme.py` (`LIGHT` token set) but is NOT wired to the UI.
-
-**Reason:** Streamlit's number input and text input widgets render text in
-incorrect colors in light mode in some browsers — this requires browser-
-specific CSS fixes that have not been verified yet.
-
-Do not add a working light-mode toggle until this is tested. The
-architecture is in place; it is a two-line change once verified.
+### 6. Unified light theme (v2)
+The app now ships a single unified **light** theme (warm off-white canvas,
+signal-blue accent) defined by `THEME` in `ui/theme.py`. The earlier
+dark-mode-only constraint (and its light-mode input-color bug) is resolved.
+All colors still come from `ui/theme.py` — never hardcode hex in pages.
+Margin-of-safety colors use the `MS_FAIL` / `MS_WARN` thresholds and
+`ms_status()` there, not inline values.
 
 ---
 
@@ -163,20 +173,24 @@ ksi happens inside `calc_stress_at_points()` via `/1000`.
 
 ## Methodology
 
+Authoritative methodology reference: handoff §3 + `CHANGELOG.md`. Summary:
+
 ### Normal stress
 ```
 σ_axial  = P / A
-σ_bend   = (My·z)/Iy + (Mz·y)/Iz
+σ_bend   = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ,  Δ = Iy·Iz − Iyz²
 σ_total  = σ_axial + σ_bend
 ```
+Unsymmetric-bending tensor (reduces to (My·z)/Iy + (Mz·y)/Iz when Iyz = 0).
 
-### Shear stress (VQ/It)
-```
-τ_Vy = Vy·Q_y / (Iy·t_w)
-τ_Vz = Vz·Q_z / (Iz·t_w)
-```
-Q and t_w are defined per-shape and reflect the maximum shear at the
-neutral axis. The same Q/t_w value is used at all key points (conservative).
+### Shear stress (v2 — see handoff §3.2–3.3, CHANGELOG Phases 2–3)
+- **Open thin-walled**: per-point **Bruhn midline shear flow**
+  `q(s) = −[(Vy·Iy − Vz·Iyz)·∫y·t ds + (Vz·Iz − Vy·Iyz)·∫z·t ds]/Δ`, τ = q/t,
+  with the correct axis pairing (Vy↔Iz/∫y, Vz↔Iy/∫z) and Iyz included.
+- **Solids / closed tubes**: VQ/It with the corrected pairing; Q at the
+  neutral axis is used at all key points (conservative — see Known issues).
+- **FEM / imported**: σ and the combined τ come straight from the
+  `sectionproperties` elasticity solve (exact per-point, any polygon).
 
 ### Torsional shear stress
 Depends on section type:
@@ -188,25 +202,30 @@ Depends on section type:
 ⚠️ Warping stresses are **not** included for open sections. The UI warns the
 user when torsion is applied to an open section.
 
-### Total shear and principal stresses
+### Total shear and principal stresses (v2)
+The v1 RSS combination `√(τ_Vy²+τ_Vz²+τ_T²)` was **unconservative** and has
+been removed everywhere. Combined wall shear (handoff §3.3):
 ```
-τ_total = √(τ_Vy² + τ_Vz² + τ_T²)
-σ1, σ2  = σ/2 ± √[(σ/2)² + τ_total²]
-σ_vm    = √(σ1² − σ1·σ2 + σ2²)
+τ_wall  = |τ_Vy + τ_Vz| + |τ_T|     (open: flows share the wall tangent)
+τ_wall  = √(τ_Vy² + τ_Vz²) + |τ_T|  (solids/tubes: biaxial, then torsion)
+σ1, σ2  = σ/2 ± √[(σ/2)² + τ_wall²]
+σ_vm    = √(σ1² − σ1·σ2 + σ2²)  ( = √(σ² + 3·τ²) )
 ```
 
-### Margins of safety
+### Margins of safety (v2 §3.6 check set — replaces the v1 six checks)
 ```
-MS = Allowable / (SF · Applied) − 1
+MS = Allowable / (SF · Applied) − 1        SF_yield default 1.0, SF_ult 1.5
 ```
-Six checks:
-1. σ1 vs Fty (yield)
-2. σ1 vs Ftu (ultimate)
-3. |σ2| vs Fcy (compression yield)
-4. τ_total vs Fsu (shear ultimate)
-5. σ_vm vs Ftu (von Mises)
-6. MMPDS Interaction §1.3: `MS = 1/√(Rc²+Rb²+Rs²) − 1`
-   where `Rc = σ_axial/Ftu`, `Rb = σ_bend/Fbu`, `Rs = τ/Fsu`
+1. σ_vm vs Fty (yield, distortion energy — primary yield criterion)
+2. σ₁ vs Ftu (ultimate; governs only when σ₁ > 0)
+3. |σ₂| vs Fcy (compression yield; governs only when σ₂ < 0)
+4. τ_wall vs Fsu (shear ultimate)
+5. Combined interaction, curve `(Ra+Rb) + Rs² = 1` (Bruhn C4-family):
+   `MS = 2/[(Ra+Rb) + √((Ra+Rb)² + 4·Rs²)] − 1`, with SF_ult baked into
+   Ra = |σ_axial|/Fa, Rb = |σ_bend|/Fbu, Rs = τ_wall/Fsu. Replaces the v1
+   RSS-style `1/√(Rc²+Rb²+Rs²) − 1`, which was unconservative (CHANGELOG).
+
+The removed v1 checks (σ₁ vs Fty, σ_vm vs Ftu) and rationale are in CHANGELOG.
 
 ### Cozzone bending allowable
 ```
@@ -217,13 +236,15 @@ Shape factor `f` is a simplified constant per shape class (attribute
 NACA TN-1818. See `shapes.py` docstring for the full table and note on
 when a rigorous Cozzone analysis would be warranted.
 
-### Bending on geometric axes
-L-beam and Z-beam have nonzero product of inertia `Iyz` — their principal
-bending axes are rotated from the geometric Y/Z axes. The tool assumes
-bending about the geometric axes, which is valid when the member is
-constrained by adjacent structure (skin, frames, fasteners) to bend in
-the geometric plane. This assumption is documented with `⚠️ ASSUMPTION`
-comments in `shapes.py` and in the UI formulae block.
+### Unsymmetric bending (v2 — the old geometric-axis assumption is GONE)
+Normal stress uses the full unsymmetric-bending tensor (handoff §3.1):
+```
+σ_bend = [(My·Iz − Mz·Iyz)·z + (Mz·Iy − My·Iyz)·y] / Δ,   Δ = Iy·Iz − Iyz²
+```
+which reduces to (My·z)/Iy + (Mz·y)/Iz when Iyz = 0. L-beam and Z-beam
+(nonzero Iyz) are therefore valid with **no** constraint assumption — the v1
+`⚠️ ASSUMPTION` about bending on geometric axes has been removed. The neutral-
+axis and principal-axis angles are shown as contour overlays.
 
 ---
 
@@ -261,14 +282,21 @@ for A36, A572, and 300M.
 
 ## Known issues and tech debt
 
+Resolved in v2 (kept here so they aren't re-opened): the light-mode input-color
+bug (light theme now ships); the degenerate/uniform shear contour (both the
+interactive and report contours now render the FEM field — see CHANGELOG 6A /
+6C.1); L/Z-beam product of inertia Iyz (now computed; unsymmetric-bending
+tensor implemented, so the geometric-axis assumption is gone); per-point
+open-section shear (Bruhn midline shear flow replaces v1's max-Q-everywhere).
+
 | Issue | Severity | Location | Notes |
 |-------|----------|----------|-------|
-| Light mode input field colors broken | Low | `ui/styles.py` | CSS doesn't override Streamlit widget internal theme in all browsers. Dark mode works perfectly. Fix before adding light mode toggle. |
-| Shear stress at non-centroidal KPs | Low | `calculations.py` | τ_Vy and τ_Vz use the max (neutral-axis) Q value at all key points. This is conservative. A rigorous implementation would compute Q at each point's z-coordinate. Acceptable for preliminary sizing. |
+| Warping torsion (stress) | Medium | `shapes.py`, `calculations.py`, FEM | St-Venant torsion for open sections; warping **normal** stresses (σ_w) are not computed. The UI runs a warping *screen* (L/λ) but does not add σ_w. For short open members with restrained ends this can underestimate stress — engineering judgment required. |
+| Solid/tube per-point shear | Low | `calculations.py` | Solids and closed tubes use VQ/It with the neutral-axis Q at all key points (conservative). Open sections use per-point Bruhn midline flow; the FEM solver is exact per-point for any shape. |
+| FEM corner singularity | Info | `plotting_interactive.py`, docs | At a perfectly sharp re-entrant corner the FEM torsion stress is singular and grows with mesh refinement — documented, warned in-app, not a converged design value (model a fillet). See CHANGELOG "FEM vs Classical at sharp corners". |
 | Z-beam key-point coordinates | Low | `shapes.py ZBeam.key_points()` | Top flange right tip coordinate has a tautological expression. Review when Z-beam is tested with combined Mz loading. |
-| Triangulation warnings | Info | `plotting.py` | matplotlib prints "Ignoring fixed axis limits" when `set_aspect("equal")` conflicts with explicit xlim/ylim. Cosmetic only — does not affect figures. |
-| Warping torsion | Medium | `shapes.py`, `calculations.py` | St. Venant torsion only for open sections. Warping normal stresses (σ_w) are not computed. For short open-section members with restrained ends, this can significantly underestimate stress. Engineering judgment required. |
-| L-beam / Z-beam Iyz | Medium | `shapes.py` | Product of inertia not computed. Unsymmetric bending formulas not implemented. Safe only when structural constraint assumption holds. |
+| Triangulation warnings | Info | `plotting.py` | matplotlib prints "Ignoring fixed axis limits" when `set_aspect("equal")` conflicts with explicit xlim/ylim. Cosmetic only. |
+| Per-member dimension leaders | Low | `shapes.py`, `plotting.py` | `dimension_annotations()` draws overall bbox W×H only; per-member (tf/tw) callouts are wish-list item 10b. |
 
 ---
 
@@ -276,22 +304,16 @@ for A36, A572, and 300M.
 
 ### Near-term (next session priorities)
 
+_Done in v2 (was near-term): light theme shipped, `.gitignore` added,
+unsymmetric-bending tensor implemented (old item 7), open-section per-point
+shear flow (old item 6, for open sections)._
+
 1. **Test on Streamlit Cloud**
-   Deploy and verify all 13 shapes render correctly in a browser. Check
-   mobile layout (sidebar collapses, tables scroll horizontally).
+   Deploy and verify all 11 catalog shapes + custom import render correctly in
+   a browser. Check mobile layout (sidebar collapses, tables scroll
+   horizontally; the six tabs and the Plotly contour on small screens).
 
-2. **Light mode fix**
-   Identify and apply browser-specific CSS overrides for Streamlit number
-   input fields. Test in Chrome and Safari before exposing in the menu.
-
-3. **Hamburger menu improvements**
-   Current theme toggle is functional but basic. Improve dropdown styling
-   so it doesn't affect the main page layout when open.
-
-4. **Add `.gitignore`**
-   Should ignore `__pycache__/`, `*.pyc`, `.streamlit/`, `venv/`, `.env`.
-
-5. **Report export (PDF)**
+2. **Report export (PDF)**
    Add a button that generates a print-quality PDF snapshot of the results:
    title block, section diagram, section properties, stress table, MS table.
    Suggested approach: `matplotlib.backends.backend_pdf` or `reportlab`.
@@ -299,15 +321,15 @@ for A36, A572, and 300M.
 
 ### Medium-term
 
-6. **Shear stress accuracy improvement**
-   Compute Q(z) at each key point's actual z-coordinate rather than using
-   the neutral-axis maximum everywhere. This requires per-point shear flow
-   computation, which is shape-dependent.
+6. **Shear stress accuracy (solids/tubes)** — _partly done_
+   Open sections now use per-point Bruhn midline shear flow, and the FEM
+   solver is exact per-point for any shape. Remaining: solids/closed tubes
+   still use VQ/It with the neutral-axis Q at all key points (conservative).
+   Compute Q at each point's actual coordinate for those.
 
-7. **Unsymmetric bending (L-beam, Z-beam)**
-   Implement the full bending tensor approach using Iy, Iz, Iyz to compute
-   stress at each point without the "geometric axis" assumption. Makes the
-   tool valid without relying on structural constraint.
+7. **Unsymmetric bending (L-beam, Z-beam)** — ✅ done in v2
+   The full bending tensor (Iy, Iz, Iyz) is implemented; L/Z are valid with no
+   geometric-axis assumption. Kept here for history.
 
 8. **Section property override inputs**
    Allow the engineer to override any calculated section property (A, Iy, Iz,

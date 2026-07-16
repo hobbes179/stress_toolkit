@@ -36,6 +36,18 @@ work if convergent corner values are wanted.)
 
 ## Phase 7 — Validation page, docs, release (in progress)
 
+### 7.3 — Docs reconciled to v2
+
+Documentation only. `CLAUDE.md` gained a v2 status banner (points to CHANGELOG
++ the now-historical handoff as authoritative) and its stale sections were
+corrected: shape count 13→11, "dark mode only" → unified light theme, the
+methodology block (normal-stress tensor, Bruhn shear, the removed RSS shear
+combination, the §3.6 margin set + `(Ra+Rb)+Rs²=1` interaction, unsymmetric
+bending replacing the geometric-axis assumption), and the Known-issues table
+(resolved items called out; warping-stress, solid/tube per-point shear, and
+FEM corner singularity remain). `README.md`: 13→11 shapes, dual-solver +
+import description, `library/analysis/` added to the tree.
+
 ### 7.1 — In-app Validation page (§7.4)
 
 The Validation tab now has two parts:

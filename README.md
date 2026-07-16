@@ -6,8 +6,11 @@ built with Python and Streamlit.
 ## Available modules
 
 - **Beam Section Stress** — combined-loading stress and margin-of-safety
-  analysis of arbitrary cross-sections (13 standard shapes, MMPDS-01
-  allowables, smooth contour plots).
+  analysis of cross-sections: 11 standard catalog shapes plus custom imported
+  polygons (paste vertices or upload DXF). Dual solver — classical closed-form
+  / Bruhn midline for catalog shapes and a `sectionproperties` FEM solver for
+  imported/arbitrary sections — MMPDS-01 allowables, interactive FEM stress
+  contour, and an in-app validation page.
 
 More modules will be added as siblings under `apps/`.
 
@@ -45,9 +48,10 @@ stress_toolkit/
 │   ├── materials/
 │   │   ├── materials.py             ← Material dataclass + MATERIALS dict
 │   │   └── README.md                ← schema and how-to-add docs
-│   └── shapes/
-│       ├── shapes.py                ← Section base class + 13 shapes
-│       └── README.md                ← how-to-add-a-shape docs
+│   ├── shapes/
+│   │   ├── shapes.py                ← Section base class + 11 shapes
+│   │   └── README.md                ← how-to-add-a-shape docs
+│   └── analysis/                    ← solvers (classical midline + FEM wrapper)
 ├── ui/                              ← shared styling
 │   ├── theme.py                     ← color tokens (THEME, PLOT_PALETTE)
 │   ├── styles.py                    ← CSS injection
