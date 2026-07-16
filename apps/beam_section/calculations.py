@@ -116,9 +116,13 @@ def shear_center(section: Section) -> tuple[float, float] | None:
     whose shear center handling arrives with the Phase 3 solvers.
     """
     geom = section.geometry()
-    if not (geom.is_thin_walled and geom.nodes is not None):
-        return None
-    return classical_shear_center(geom, section.section_props())
+    if geom.is_thin_walled and geom.nodes is not None:
+        return classical_shear_center(geom, section.section_props())
+    if getattr(section, "is_imported", False):
+        from library.analysis.fem_solver import fem_properties, default_mesh_size
+        ms = default_mesh_size(geom.outer, geom.voids)
+        return fem_properties(geom.outer, geom.voids, ms)["shear_center"]
+    return None
 
 
 def fem_mesh_size_for(section: Section, mesh_scale: float = 1.0) -> float:
@@ -163,15 +167,24 @@ def _fem_precompute(section: Section, geom, loads: Loads, eval_pts,
                                  P, Vy, Vz, My, Mz, T, cluster)
         return sig.reshape(n, k), tau.reshape(n, k)
 
+    def _cluster_max(arr):
+        # Peak over the cluster; NaN only where every cluster point is outside
+        # the mesh (e.g. a boundary-vertex evaluation point). Suppress the
+        # benign all-NaN warning.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return np.nanmax(arr, axis=1)
+
     sig_all, tau_all = _at(loads.P, loads.Vy, loads.Vz, loads.My, loads.Mz, loads.T)
-    sigma = sig_all[:, 0]                     # centre point
-    ttot = np.nanmax(tau_all, axis=1)         # peak shear in the cluster
+    sigma = sig_all[:, 0]                      # centre point (NaN → analytic fallback in caller)
+    ttot = _cluster_max(tau_all)
     _, tvy_c = _at(0, loads.Vy, 0, 0, 0, 0)
     _, tvz_c = _at(0, 0, loads.Vz, 0, 0, 0)
     _, tT_c  = _at(0, 0, 0, 0, 0, loads.T)
-    tvy = np.nanmax(tvy_c, axis=1)
-    tvz = np.nanmax(tvz_c, axis=1)
-    tT  = np.nanmax(tT_c, axis=1)
+    tvy = _cluster_max(tvy_c)
+    tvz = _cluster_max(tvz_c)
+    tT  = _cluster_max(tT_c)
     return sigma, tvy, tvz, tT, ttot
 
 
@@ -216,7 +229,9 @@ def calc_stress_at_points(section: Section, loads: Loads,
 
     eval_pts = _build_eval_points(section, loads)
     geom = section.geometry()
-    use_fem = (solver == "FEM")
+    # Imported polygons have no skeleton and no closed-form shear/torsion, so
+    # they always route to FEM (design handoff §5).
+    use_fem = (solver == "FEM") or getattr(section, "is_imported", False)
     open_thin = (not use_fem) and geom.is_thin_walled and geom.nodes is not None
 
     if use_fem:
@@ -243,8 +258,14 @@ def calc_stress_at_points(section: Section, loads: Loads,
         sa = loads.P / A / 1000 if A > 0 else 0.0
 
         if use_fem:
-            sn = float(fem_sigma[idx]) if math.isfinite(fem_sigma[idx]) else sa
-            sb = sn - sa
+            if math.isfinite(fem_sigma[idx]):
+                sn = float(fem_sigma[idx])
+                sb = sn - sa
+            else:
+                # Boundary point outside the mesh — fall back to the analytic
+                # unsymmetric-bending tensor for the normal stress.
+                sb = (c_z * z + c_y * y) / 1000
+                sn = sa + sb
             tvy = float(np.nan_to_num(fem_tvy[idx]))
             tvz = float(np.nan_to_num(fem_tvz[idx]))
             tau_T = float(np.nan_to_num(fem_tT[idx]))

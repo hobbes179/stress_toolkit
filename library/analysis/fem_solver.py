@@ -143,7 +143,7 @@ def default_mesh_size(outer: np.ndarray, voids, min_wall: float | None = None) -
     if min_wall and min_wall > 0:
         return max(min_wall**2 / 2.0, 1e-6)
     p = np.asarray(outer)
-    diag = float(np.hypot(p[:, 0].ptp(), p[:, 1].ptp()))
+    diag = float(np.hypot(np.ptp(p[:, 0]), np.ptp(p[:, 1])))
     return max((diag / 40.0) ** 2, 1e-6)
 
 

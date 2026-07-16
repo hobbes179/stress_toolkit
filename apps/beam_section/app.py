@@ -194,32 +194,86 @@ def render() -> None:
             st.caption(material.source)
 
         section_header("Cross-Section")
-        shape_name = st.selectbox("Section Shape", SHAPE_NAMES)
+        from library.analysis.fem_solver import fem_available, FEMSolver
+        geom_source = st.radio("Geometry source",
+                               ["Catalog shape", "Custom import"],
+                               horizontal=True)
 
-        cls      = SHAPE_REGISTRY[shape_name]
-        labels   = cls.dim_labels
-        defaults = cls.dim_defaults
-        dims: list = []
-        for slot, (lbl_pair, dflt) in enumerate(zip(labels, defaults)):
-            if lbl_pair is None:
-                dims.append(None)
-            else:
-                sym, desc = lbl_pair
-                v = st.number_input(
-                    f"{sym} — {desc} (in)",
-                    value=float(dflt),
-                    min_value=1e-6, step=0.0625,
-                    format="%.4f",
-                    key=f"dim_{slot}_{shape_name}",
-                )
-                dims.append(v)
+        if geom_source == "Catalog shape":
+            is_imported = False
+            shape_name = st.selectbox("Section Shape", SHAPE_NAMES)
+            cls      = SHAPE_REGISTRY[shape_name]
+            labels   = cls.dim_labels
+            defaults = cls.dim_defaults
+            dims: list = []
+            for slot, (lbl_pair, dflt) in enumerate(zip(labels, defaults)):
+                if lbl_pair is None:
+                    dims.append(None)
+                else:
+                    sym, desc = lbl_pair
+                    v = st.number_input(
+                        f"{sym} — {desc} (in)",
+                        value=float(dflt),
+                        min_value=1e-6, step=0.0625,
+                        format="%.4f",
+                        key=f"dim_{slot}_{shape_name}",
+                    )
+                    dims.append(v)
+            section = make_section(shape_name, dims)
+            dim_error = section.validate_dims()
+            if dim_error:
+                st.error(dim_error)
+                st.stop()
+        else:
+            # ── Custom section import (design handoff §5) ────────────────
+            is_imported = True
+            shape_name = "Custom (imported)"
+            from library.shapes.import_section import (
+                parse_vertex_text, parse_dxf, make_imported_section,
+                GeometryImportError,
+            )
+            if not fem_available():
+                st.error("Custom import needs the FEM backend "
+                         "(sectionproperties), which is not installed.")
+                st.stop()
 
-        section = make_section(shape_name, dims)
+            import_mode = st.radio("Input", ["Paste vertices", "Upload DXF"],
+                                   horizontal=True)
+            loops = None
+            try:
+                if import_mode == "Paste vertices":
+                    txt = st.text_area(
+                        "Vertices — 'y, z' per line; blank line separates "
+                        "loops (first loop = outer boundary)",
+                        value="0, 0\n4, 0\n4, 2\n0, 2",
+                        height=170,
+                    )
+                    if txt.strip():
+                        loops = parse_vertex_text(txt)
+                else:
+                    up = st.file_uploader("DXF file (units assumed inches)",
+                                          type=["dxf"])
+                    if up is not None:
+                        loops, skipped = parse_dxf(up.getvalue())
+                        if skipped:
+                            st.caption("Skipped: " + "; ".join(skipped))
+                if loops is None:
+                    st.info("Enter vertices or upload a DXF to build a "
+                            "custom section.")
+                    st.stop()
+                section, _res = make_imported_section(loops)
+            except GeometryImportError as e:
+                st.error(f"Import error: {e}")
+                st.stop()
 
-        dim_error = section.validate_dims()
-        if dim_error:
-            st.error(dim_error)
-            st.stop()
+            b, h = _res.bbox
+            st.success(
+                f"Imported ✓  bbox {b:.3f} × {h:.3f} in · A = {_res.area:.4f} in²"
+            )
+            st.caption("⚠️ Drawing units assumed INCHES — confirm the bounding "
+                       "box above matches your part before trusting results.")
+            for _n in _res.notes:
+                st.caption(_n)
 
         def _box(body_html: str, accent: str, bg: str) -> None:
             st.markdown(
@@ -229,24 +283,26 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
 
-        # Solver override (design handoff §2.3). FEM offered only if the
-        # sectionproperties backend is installed.
-        from library.analysis.fem_solver import fem_available, FEMSolver
-        _solver_opts = (["Auto", "Classical", "FEM"] if fem_available()
-                        else ["Auto", "Classical"])
-        solver_choice = st.selectbox(
-            "Solver", _solver_opts,
-            help="Auto: classical midline for open sections, VQ/It for "
-                 "solids/tubes. FEM: sectionproperties — for cross-checks and "
-                 "(later) arbitrary polygons.",
-        )
+        # Solver override (design handoff §2.3). Imported polygons are always
+        # FEM; catalog shapes offer Auto/Classical/FEM (FEM if backend present).
+        if is_imported:
+            solver_choice = "FEM"
+            st.caption("Solver: **sectionproperties FEM** (imported section)")
+        else:
+            _solver_opts = (["Auto", "Classical", "FEM"] if fem_available()
+                            else ["Auto", "Classical"])
+            solver_choice = st.selectbox(
+                "Solver", _solver_opts,
+                help="Auto: classical midline for open sections, VQ/It for "
+                     "solids/tubes. FEM: sectionproperties — for cross-checks "
+                     "and arbitrary polygons.",
+            )
         mesh_scale = 1.0
         if solver_choice == "FEM":
             _mesh_choice = st.selectbox(
                 "FEM mesh refinement", ["Default", "Coarse", "Fine"],
-                help="Max element area vs the auto heuristic (~min-wall²/2). "
-                     "Finer = more accurate, slower (the warping solve is the "
-                     "slow step).",
+                help="Max element area vs the auto heuristic. Finer = more "
+                     "accurate, slower (the warping solve is the slow step).",
             )
             mesh_scale = {"Coarse": 4.0, "Default": 1.0, "Fine": 0.25}[_mesh_choice]
 
@@ -359,7 +415,7 @@ def render() -> None:
 
     # ── Solver identity (traceability — acceptance #7) ───────────────────
     if solver_choice == "FEM":
-        solver_name = FEMSolver().name
+        solver_name = FEMSolver().name + (" (imported)" if is_imported else "")
         solver_cite = FEMSolver().method_citation
     elif section.category == "Open thin-walled" and solver_choice in ("Auto", "Classical"):
         solver_name = "Classical midline (Bruhn)"
@@ -394,7 +450,9 @@ def render() -> None:
         "<span>X = beam axis</span>"
         "<span>Y = horiz. right</span>"
         "<span>Z = vert. up</span>"
-        f"<span title='{solver_cite}'>Solver: <b>{solver_name}</b></span>"
+        + (f"<span style='color:{t.amber};font-weight:700;'>IMPORTED — FEM</span>"
+           if is_imported else "")
+        + f"<span title='{solver_cite}'>Solver: <b>{solver_name}</b></span>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,

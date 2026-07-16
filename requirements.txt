@@ -10,3 +10,6 @@ matplotlib>=3.6.0
 # (deploy a throwaway branch) before relying on the FEM path in production.
 sectionproperties>=3.7,<4
 shapely>=2.0
+
+# v2 — custom-section import (Phase 5). DXF parsing.
+ezdxf>=1.3

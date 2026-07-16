@@ -7,6 +7,71 @@ commit adds an entry to this file.**
 
 ---
 
+## Phase 5 — custom-section import (DXF / pasted polygon) (unreleased)
+
+The v2 headline feature (decision D3): analyse an arbitrary cross-section,
+not just the catalog shapes. Two input paths feed one validated-geometry
+pipeline; imported sections route automatically to the FEM solver and get
+the full unsymmetric-bending treatment.
+
+### 1. Import module — `library/shapes/import_section.py`
+
+- **Pasted vertices** — "y, z" per line, blank line separates loops, first
+  loop = outer boundary. Zero-friction, and the test harness for the whole
+  pipeline.
+- **DXF upload** — `parse_dxf` reads closed LWPOLYLINE / POLYLINE and CIRCLE
+  entities via `ezdxf` (`ezdxf.path.make_path().flattening()` tessellates
+  bulges/arcs/circles to a ~0.001 in chord sagitta). Non-closed / unsupported
+  entities are skipped with a per-entity reason shown in the UI.
+- **Validation (§5.2 — imported geometry is untrusted)**: loops closed and
+  non-self-intersecting (`shapely.is_valid`), winding auto-fixed (outer CCW,
+  voids CW), largest-area loop = outer with every other loop required to be
+  strictly inside it (stray/overlapping/crossing loops rejected), duplicate
+  points removed, and a 2000-vertex cap with Douglas-Peucker simplification.
+  Every failure raises `GeometryImportError` with a plain-English message so
+  the UI shows `st.error(...)` — never a traceback.
+- **`ImportedSection`** — a `Section` backed by the validated polygon.
+  A / Iy / Iz / Iyz come from Green's theorem (so the Phase-1 unsymmetric
+  bending applies automatically); it carries `is_imported = True`, no midline
+  skeleton, and its evaluation points are the boundary/void vertices plus the
+  centroid (no named key points).
+
+### 2. Routing
+
+`calc_stress_at_points` forces the FEM solver for any `is_imported` section
+(no skeleton, no closed-form shear/torsion). `shear_center()` returns the FEM
+shear centre for imported sections, so the §3.4 induced-torsion path works
+for them too. Imported normal stress at boundary points outside the FEM mesh
+falls back to the analytic unsymmetric-bending tensor.
+
+### 3. UI
+
+Geometry tab gains a **"Geometry source: Catalog shape / Custom import"**
+toggle. Custom import shows the paste-vertices text area or the DXF uploader,
+then a **bounding-box + area confirmation** with an explicit "units assumed
+INCHES — confirm before trusting results" caption (silent unit errors are the
+classic DXF-import failure). Imported sections show an **"IMPORTED — FEM"**
+badge in the results header, force the FEM solver (with the mesh-refinement
+control available), and render through the existing section diagram and
+contour (the contour's shear field for imported sections is superseded by the
+Phase-6 FEM contour; normal-stress fields are correct via the tensor).
+
+### 4. Dependency
+
+`requirements.txt` adds `ezdxf>=1.3`. Like `sectionproperties`, confirm it
+installs on Streamlit Cloud (it is pure-Python, so low risk).
+
+### Tests
+
+`tests/test_phase5.py` (13; DXF cases guarded by `ezdxf`): pasted-vertex
+parse + build, rectangle / voided-box / I-beam-roundtrip properties vs
+catalog, imported-routes-through-FEM with FEM shear-centre check, the §7.3
+hostile-input gate (self-intersection, void outside boundary, void crossing
+boundary, degenerate, unparseable — all raise cleanly), DXF round-trip
+(I-beam ≤1%), DXF CIRCLE import, and DXF open-polyline rejection.
+
+---
+
 ## Phase 4 — FEM solver (sectionproperties) + routing (unreleased)
 
 Adds a finite-element section solver as a second, independent analysis path,
