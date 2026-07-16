@@ -192,10 +192,13 @@ def _stress_at(section: Section, loads, y: float, z: float,
         sb = 0.0
     sn = sa + sb
 
-    tvy = loads.Vy * Qy / (Iy * tw_y) / 1000 if (Iy > 0 and tw_y > 0) else 0.0
-    tvz = loads.Vz * Qz / (Iz * tw_z) / 1000 if (Iz > 0 and tw_z > 0) else 0.0
-    # v2 Phase 0 interim combination (CHANGELOG.md v1.1.0) — must match
-    # apps/beam_section/calculations.py::calc_stress_at_points exactly.
+    # Corrected axis pairing (design handoff §3.2, CHANGELOG Phase 3): Vz↔
+    # (Qy,Iz→Iy,tw_y), Vy↔(Qz,Iz,tw_z). NOTE: this contour evaluator remains
+    # a coarse whole-section approximation (VQ/It with NA-max Q) for all shape
+    # types pending the Phase-6 plotting overhaul; the results-table numbers
+    # use the per-point solvers.
+    tvy = loads.Vy * Qz / (Iz * tw_z) / 1000 if (Iz > 0 and tw_z > 0) else 0.0
+    tvz = loads.Vz * Qy / (Iy * tw_y) / 1000 if (Iy > 0 and tw_y > 0) else 0.0
     tau = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
 
     half = sn / 2

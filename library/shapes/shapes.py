@@ -271,6 +271,17 @@ class Section:
         """
         return self.section_props().Iyz
 
+    def Cw(self) -> Optional[float]:
+        """
+        Warping constant Cw (in⁶) for the §3.5 warping screen. Default None
+        (unavailable / not applicable). Thin-walled open sections whose walls
+        all meet at a single point (T, L, Plus) are warping-free → Cw = 0.
+        The I-beam has a documented closed form; C and Z are left as None
+        (closed forms deferred — the screen then advises engineering
+        judgment rather than showing a wrong number).
+        """
+        return None
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # RECTANGLE — solid rectangular bar
@@ -873,6 +884,13 @@ class IBeam(Section):
             KeyPoint("H", "Web-flange re-entrant",  -tw/2,   d/2 - tf),
         ]
 
+    def Cw(self):
+        # Doubly-symmetric I: Cw = t_f·b_f³·h²/24, h = distance between flange
+        # centroids (≈ d − t_f). Standard result (e.g. Roark, Timoshenko).
+        bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
+        h = d - tf
+        return tf * bf**3 * h**2 / 24.0
+
     def _midline(self):
         bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
         hw = d / 2 - tf / 2          # flange-midline z (centroid at origin)
@@ -992,6 +1010,9 @@ class TBeam(Section):
             KeyPoint("F", "Web bottom — left",       -tw/2,  0 - zb),
             KeyPoint("G", "Centroid",                 0,     0),
         ]
+
+    def Cw(self):
+        return 0.0   # warping-free: web and flange meet at a single point
 
     def _midline(self):
         bf, tf, hw, tw = self.d1, self.d2, self.d3, self.d4
@@ -1119,6 +1140,9 @@ class LBeam(Section):
             KeyPoint("F", "Outer corner — bot-left", 0 - yb,    0 - zb),
             KeyPoint("G", "Centroid",                0,         0),
         ]
+
+    def Cw(self):
+        return 0.0   # warping-free: the two legs meet at a single corner
 
     def _midline(self):
         b, h, tb, th = self.d1, self.d2, self.d3, self.d4
@@ -1485,6 +1509,9 @@ class PlusCross(Section):
             KeyPoint("F", "Top-left re-entrant",    -tv/2, th/2),
             KeyPoint("G", "Centroid — max shear",    0,    0),
         ]
+
+    def Cw(self):
+        return 0.0   # warping-free: all four arms meet at the central point
 
     def _midline(self):
         b, h, th, tv = self.d1, self.d2, self.d3, self.d4

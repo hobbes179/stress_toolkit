@@ -7,6 +7,91 @@ commit adds an entry to this file.**
 
 ---
 
+## Phase 3 — solids, closed cells, induced torsion, warping screen (unreleased)
+
+Completes the shear/torsion methodology for the catalog: corrects the
+remaining shear pairing, adds the §3.4 induced-torsion path, and adds the
+§3.5 warping screen — which lets the open-section torsion input be unlocked.
+
+### 1. Transverse-shear axis pairing corrected on the solid/tube path
+
+The VQ/It path now uses the correct pairing (Vz↔Iy/Qy, Vy↔Iz/Qz), matching
+the fix already made for open sections in Phase 2. For the doubly-symmetric
+solids (Rectangle, Circle, Ellipse) this is a **no-op** — their max-shear
+factor is the same on both axes (1.5·V/A, 4·V/3A), so v1 was accidentally
+correct there. It **does** change asymmetric closed tubes: e.g. a tall 2×10
+Rect Tube under vertical shear now correctly resolves on the strong axis
+`Iy` (v1 used the weak axis `Iz`, ~3× too high here). The contour-plot
+evaluator (`plotting._stress_at`) was corrected to match.
+
+### 2. Closed catalog tubes: exact by VQ/It + Bredt (why no q₀ integrator)
+
+The Phase-3 gate for closed cells — thin-ring property goldens
+(A=2πrt, I=πr³t, J=2πr³t) and the Vz+T combination = 2τ (not the RSS 1.414τ)
+— passes on the corrected path. The design-handoff §3.2 closed-cell shear
+flow adds a redundant constant flow `q₀ = −∮(q_open/t)ds / ∮(1/t)ds`; for a
+**doubly-symmetric single cell under transverse shear through the shear
+centre, q₀ = 0 exactly** (the symmetric cut gives an antisymmetric q_open
+with ∮q_open/t ds = 0), so VQ/It is not merely approximate but exact for the
+two symmetric catalog tubes. A general q₀ integrator only matters for
+asymmetric or imported closed sections, which route to the FEM solver in
+Phase 4 — so it is intentionally not built here. (Recorded so the omission
+is a documented decision, not a gap.)
+
+### 3. Induced torsion from off-shear-center shear (§3.4)
+
+New `calculations.induced_torsion()`:
+
+    T_induced = Vz·(y_app − y_sc) − Vy·(z_app − z_sc)
+
+and a sidebar "Shear applied at: Shear center / Centroid / Custom (y, z)"
+control. Transverse shear applied anywhere other than the shear centre now
+adds its induced torque to the total, shown broken out in the sidebar and
+the Applied-Loads panel.
+
+**Why this matters (v1 gap):** v1 applied shear at the centroid implicitly
+and computed **no** induced torsion for channels. Example — the default
+channel under Vz=1000 lb at the centroid has 2042 lb·in of induced torsion,
+raising the governing shear from 0.77 ksi (v1) to **6.07 ksi** (~8×). This
+was a silent, large unconservatism for any single-symmetry open section.
+Doubly-symmetric sections (shear centre = centroid) are unaffected when
+loaded at the centroid.
+
+### 4. Warping screen + open-section torsion unlocked (§3.5)
+
+- `Section.Cw()` warping constant: closed form for the I-beam
+  `Cw = t_f·b_f³·(d−t_f)²/24`; `0.0` for the warping-free sections whose
+  walls meet at a point (T, L, Plus); `None` (unavailable) for C and Z,
+  whose closed forms are deferred so the screen advises judgment rather than
+  showing a wrong number.
+- `calculations.warping_characteristic_length()`:
+  `λ = √(E·Cw/(G·J))`, with the L/λ screening bands (≳10 St-Venant OK;
+  ≲2 restrained → warping dominates, red warning).
+- **The open-section torsion input is now unlocked.** v1 hard-locked it to
+  zero (St-Venant omits warping normal stresses). It is replaced by the
+  quantitative screen: users may apply torsion and enter a member length L;
+  the screen flags when St-Venant-only results are untrustworthy. Warping
+  *stresses* themselves remain out of scope (screen only), per §3.5.
+
+### Scope / still deferred
+
+- Warping **stresses** (σ_w) — screen only, per handoff (roadmap).
+- Rectangle solid torsion still uses the documented Timoshenko approximation
+  rather than Roark α/β coefficients (the existing form is conservative and
+  documented; refinement deferred).
+- The contour-plot shear field remains a coarse whole-section VQ/It
+  approximation pending the Phase-6 plotting overhaul; results-table numbers
+  use the per-point solvers.
+
+### Tests
+
+`tests/test_phase3.py` (10): solid shear factors, tall-tube strong-axis
+pairing, thin-ring goldens, tube Vz+T algebraic combination, channel
+induced-torsion sign + zero-at-shear-centre, symmetric-section zero induced
+torsion, I-beam Cw closed form, warping-free Cw=0, λ screen.
+
+---
+
 ## Phase 2 — Classical midline solver, open sections (unreleased)
 
 Builds the Bruhn-style midline shear-flow solver for open thin-walled

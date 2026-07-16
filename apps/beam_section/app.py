@@ -23,7 +23,8 @@ from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
 
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
-    neutral_axis_angle_deg, shear_center,
+    neutral_axis_angle_deg, shear_center, induced_torsion,
+    warping_characteristic_length,
 )
 from apps.beam_section.plotting import draw_section, draw_contour
 
@@ -220,34 +221,102 @@ def render() -> None:
             st.error(dim_error)
             st.stop()
 
+        def _box(body_html: str, accent: str, bg: str) -> None:
+            st.markdown(
+                f"<div style='background:{bg};border-left:3px solid {accent};"
+                f"border-radius:4px;padding:10px 12px;margin-top:4px;font-size:11px;"
+                f"color:{t.muted};line-height:1.6;'>{body_html}</div>",
+                unsafe_allow_html=True,
+            )
+
         section_header("Applied Loads")
         P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
         Vy = st.number_input("Vy — Shear Y (lb)",      value=0.0,    step=100., format="%.1f")
         Vz = st.number_input("Vz — Shear Z (lb)",      value=500.0,  step=100., format="%.1f")
         My = st.number_input("My — Bending Y (lb·in)", value=1000.0, step=100., format="%.1f")
         Mz = st.number_input("Mz — Bending Z (lb·in)", value=0.0,    step=100., format="%.1f")
-        T_locked = (section.category == "Open thin-walled")
-        T = st.number_input(
-            "T — Torsion (lb·in)",
-            value=0.0,
-            step=100.,
-            format="%.1f",
-            disabled=T_locked,
+        T_applied = st.number_input("T — Torsion (lb·in)", value=0.0,
+                                    step=100., format="%.1f")
+
+        # ── Shear application point → induced torsion (§3.4) ──────────────
+        sc = shear_center(section)
+        y_sc, z_sc = sc if sc is not None else (0.0, 0.0)
+        app_mode = st.selectbox(
+            "Shear applied at",
+            ["Shear center", "Centroid", "Custom (y, z)"],
+            help="Transverse shear applied off the shear center induces "
+                 "torsion T = Vz·(y_app−y_sc) − Vy·(z_app−z_sc) (§3.4).",
         )
-        if T_locked:
-            T = 0.0
-            st.markdown(
-                f"<div style='background:{t.amber_bg};border-left:3px solid {t.amber};"
-                f"border-radius:4px;padding:10px 12px;margin-top:4px;font-size:11px;"
-                f"color:{t.muted};line-height:1.6;'>"
-                f"<b style='color:{t.amber};'>Torsion locked to zero.</b> "
-                f"St. Venant torsion (τ = T·t/J) omits warping stresses, which can "
-                f"dominate for short members with restrained ends — a potentially "
-                f"non-conservative error. For torsion-critical members, use a closed "
-                f"section (Rect Tube or Circular Tube)."
-                f"</div>",
-                unsafe_allow_html=True,
+        if app_mode == "Shear center":
+            y_app, z_app = y_sc, z_sc
+        elif app_mode == "Centroid":
+            y_app, z_app = 0.0, 0.0
+        else:
+            y_app = st.number_input("y_app (in)", value=float(y_sc),
+                                    step=0.1, format="%.3f")
+            z_app = st.number_input("z_app (in)", value=float(z_sc),
+                                    step=0.1, format="%.3f")
+
+        T_induced = induced_torsion(Vy, Vz, y_app, z_app, y_sc, z_sc)
+        T = T_applied + T_induced
+
+        if abs(T_induced) > 1e-9:
+            _box(
+                f"<b style='color:{t.accent};'>Induced torsion "
+                f"{T_induced:+,.1f} lb·in.</b> Shear applied off the shear "
+                f"center (SC = {y_sc:.3f}, {z_sc:.3f}). "
+                f"T_total = T_applied {T_applied:+,.1f} + induced "
+                f"{T_induced:+,.1f} = <b>{T:,.1f}</b> lb·in.",
+                t.accent, t.amber_bg,
             )
+
+        # ── Warping screen (§3.5) for open sections under torsion ────────
+        if section.category == "Open thin-walled" and abs(T) > 1e-9:
+            Cw = section.Cw()
+            J = section.J_torsion()
+            if Cw is None:
+                _box(
+                    "<b style='color:{c};'>St-Venant torsion applied "
+                    "(τ = T·t/J).</b> Warping constant Cw is not tabulated "
+                    "for this section, so the warping screen cannot run — "
+                    "for short members with restrained ends, warping normal "
+                    "stresses (not computed) may make this unconservative. "
+                    "Apply engineering judgment.".format(c=t.amber),
+                    t.amber, t.amber_bg,
+                )
+            elif Cw == 0.0:
+                _box(
+                    "<b>Warping-free section (Cw ≈ 0).</b> St-Venant torsion "
+                    "governs; there is no warping magnification to screen for.",
+                    t.muted, t.amber_bg,
+                )
+            else:
+                lam = warping_characteristic_length(material.E, material.G, Cw, J)
+                L_member = st.number_input(
+                    "Member length L (in) — warping screen",
+                    value=0.0, min_value=0.0, step=1.0, format="%.2f",
+                    help="0 = skip. Screens L/λ: ≳10 St-Venant OK, ≲2 warping dominates.",
+                )
+                if lam and L_member > 0:
+                    ratio = L_member / lam
+                    if ratio >= 10:
+                        _box(f"<b style='color:#2ecc71;'>L/λ = {ratio:.1f} ≳ 10.</b> "
+                             f"St-Venant-only torsion is reasonable (λ = {lam:.2f} in).",
+                             "#2ecc71", t.amber_bg)
+                    elif ratio <= 2:
+                        _box(f"<b style='color:#e74c3c;'>L/λ = {ratio:.1f} ≲ 2.</b> "
+                             f"Warping dominates for restrained ends — St-Venant-only "
+                             f"results are UNCONSERVATIVE (λ = {lam:.2f} in). Warping "
+                             f"normal stresses are not computed.",
+                             "#e74c3c", t.amber_bg)
+                    else:
+                        _box(f"<b style='color:{t.amber};'>L/λ = {ratio:.1f}.</b> "
+                             f"Intermediate — include warping if the ends are "
+                             f"restrained (λ = {lam:.2f} in).",
+                             t.amber, t.amber_bg)
+                elif lam:
+                    _box(f"Enter member length L to screen warping "
+                         f"(λ = {lam:.2f} in).", t.muted, t.amber_bg)
 
         if shape_name == "Rectangle" and T != 0:
             _a = max(section.d1, section.d2)
@@ -394,10 +463,15 @@ def render() -> None:
         section_header("Applied Loads")
         for label, val, unit in [
             ("P", P, "lb"), ("Vy", Vy, "lb"), ("Vz", Vz, "lb"),
-            ("My", My, "lb·in"), ("Mz", Mz, "lb·in"), ("T", T, "lb·in"),
+            ("My", My, "lb·in"), ("Mz", Mz, "lb·in"),
+            ("T (total)", T, "lb·in"),
         ]:
             value_color = t.accent if val != 0 else t.muted
             info_card(label, f"{val:,.1f}", unit, value_color=value_color)
+        if abs(T_induced) > 1e-9:
+            info_card("T induced", f"{T_induced:,.1f}", "lb·in",
+                      value_color=t.accent,
+                      sub="from shear off the shear center (§3.4)")
 
         section_header("Section Properties")
         iyz_val = section.Iyz()

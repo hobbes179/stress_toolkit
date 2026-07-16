@@ -76,6 +76,39 @@ def _build_eval_points(section: Section, loads: Loads):
     return pts
 
 
+def induced_torsion(Vy: float, Vz: float,
+                    y_app: float, z_app: float,
+                    y_sc: float, z_sc: float) -> float:
+    """
+    Torsion (lb·in, about +X, right-hand rule) induced when transverse shear
+    is applied at (y_app, z_app) rather than at the shear center (design
+    handoff §3.4):
+
+        T_induced = Vz·(y_app − y_sc) − Vy·(z_app − z_sc)
+
+    Zero when the load acts through the shear center. This is what v1 ignored
+    for channels (shear applied at the centroid silently produced no torsion).
+    """
+    return Vz * (y_app - y_sc) - Vy * (z_app - z_sc)
+
+
+def warping_characteristic_length(E: float, G: float,
+                                  Cw: float | None, J: float) -> float | None:
+    """
+    Torsional characteristic length λ = √(E·Cw / (G·J)) (design handoff §3.5),
+    with E, G in Msi, Cw in in⁶, J in in⁴ → λ in inches. Returns None when Cw
+    is unavailable or J ≤ 0. λ = 0 for warping-free sections (Cw = 0).
+
+    Screening guidance: L/λ ≳ 10 → St-Venant torsion is reasonable;
+    L/λ ≲ 2 with restrained ends → warping dominates (results unconservative).
+    """
+    if Cw is None or J <= 0 or E <= 0 or G <= 0:
+        return None
+    if Cw <= 0:
+        return 0.0
+    return math.sqrt(E * Cw / (G * J))
+
+
 def shear_center(section: Section) -> tuple[float, float] | None:
     """
     Shear center (y_sc, z_sc) relative to the centroid for open thin-walled
@@ -155,12 +188,17 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
             # tangent (add signed), torsion adds in magnitude (conservative).
             tau_total = abs(tvy + tvz) + abs(tau_T)
         else:
-            tvy = (loads.Vy * Qy / (Iy * tw_y) / 1000
-                   if (Iy > 0 and tw_y > 0) else 0.0)
-            tvz = (loads.Vz * Qz / (Iz * tw_z) / 1000
+            # Solids / closed tubes — VQ/It with the CORRECTED axis pairing
+            # (design handoff §3.2, CHANGELOG Phase 3): vertical shear Vz uses
+            # the strong-axis quantities (Qy=∫z dA, Iy, tw_y) and horizontal
+            # shear Vy uses (Qz=∫y dA, Iz, tw_z). v1 had these swapped.
+            tvy = (loads.Vy * Qz / (Iz * tw_z) / 1000
                    if (Iz > 0 and tw_z > 0) else 0.0)
+            tvz = (loads.Vz * Qy / (Iy * tw_y) / 1000
+                   if (Iy > 0 and tw_y > 0) else 0.0)
             tau_T = tau_T_sec
-            # Phase-0 interim combination (CHANGELOG.md v1.1.0) — solids/tubes.
+            # §3.3 solids: transverse components are not collinear (biaxial),
+            # so combine by magnitude, then add torsion collinearly.
             tau_total = math.sqrt(tvy**2 + tvz**2) + abs(tau_T)
 
         # Principal stresses (2D plane-stress state)
