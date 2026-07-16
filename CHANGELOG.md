@@ -7,6 +7,33 @@ commit adds an entry to this file.**
 
 ---
 
+## Known behavior — FEM vs Classical at sharp re-entrant corners
+
+Not a bug; recorded so it is not mistaken for one. The classical midline
+solver is a **nominal-stress** method (τ = T·t/J, smooth VQ/It) and ignores
+corners by construction. The FEM solver meshes the geometry exactly as drawn,
+and the catalog shapes have perfectly sharp, unfilleted 90° re-entrant
+corners at their web–flange junctions. Consequences when comparing solvers:
+
+- Under bending/shear, FEM reads a *finite but elevated* stress at those
+  junctions (~10–25% above classical at default dims).
+- Under **torsion**, the stress at a sharp inside corner is theoretically
+  **singular**, so the FEM peak there does not converge — it grows with mesh
+  refinement (channel pure-T example: 1.66 → 1.91 → 2.26 → 2.64 ksi across
+  Coarse→finer, vs the classical nominal 1.41 ksi). The FEM shear cluster
+  sampling reports this local peak.
+
+The §7.2 cross-solver agreement suite deliberately samples wall **midpoints**
+(away from corners), where the two solvers agree to the documented
+tolerances. Per the project owner's decision, the app keeps the raw FEM peaks
+(they are the true corner concentration for the geometry as drawn) and shows
+a header warning when FEM is selected: the peak at a sharp junction is
+mesh-dependent and not a converged design value — model a fillet radius for
+real corner stresses. (A fillet-on-import option remains available as future
+work if convergent corner values are wanted.)
+
+---
+
 ## Phase 5 — custom-section import (DXF / pasted polygon) (unreleased)
 
 The v2 headline feature (decision D3): analyse an arbitrary cross-section,

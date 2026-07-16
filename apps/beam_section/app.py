@@ -459,6 +459,20 @@ def render() -> None:
     )
     st.caption(f"Method: {solver_cite}")
 
+    if solver_choice == "FEM":
+        st.warning(
+            "**FEM captures stress concentrations at sharp re-entrant corners** "
+            "(web–flange junctions, void corners) that the classical "
+            "nominal-stress method omits — this is why FEM can read higher than "
+            "Classical near junctions. At a perfectly sharp inside corner the "
+            "torsion stress is theoretically **singular**, so the FEM peak there "
+            "**grows as the mesh refines** (try the mesh selector) and is *not* a "
+            "converged design value — model a fillet radius for real corner "
+            "stresses. Away from corners the two solvers agree (see the "
+            "Validation checks).",
+            icon="⚠️",
+        )
+
     # ── 01 — Governing Stress Summary ────────────────────────────────────
     section_header("Governing Stress Summary", number="01",
                    desc="extreme-fiber results across the section")
