@@ -204,3 +204,19 @@ def test_report_contour_shear_field_varies_unlike_legacy():
     fig_new = draw_report_contour(sec, ys, zs, sig, tau, "τ_total")
     assert len(fig_new.axes) >= 2
     plt.close(fig_new)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Phase 6E: table export — dependency-free Markdown formatter
+# ──────────────────────────────────────────────────────────────────────────
+def test_df_to_markdown_roundtrips_shape_and_values():
+    import pandas as pd
+    from ui.components import df_to_markdown
+    df = pd.DataFrame({"Check": ["σ_vm vs Fty", "τ_wall vs Fsu"],
+                       "MS": ["+0.120", "-0.050"]})
+    md = df_to_markdown(df)
+    lines = md.splitlines()
+    assert lines[0] == "| Check | MS |"
+    assert lines[1] == "| --- | --- |"
+    assert lines[2] == "| σ_vm vs Fty | +0.120 |"
+    assert len(lines) == 4                       # header + rule + 2 rows

@@ -36,6 +36,23 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6E — Results tables → st.dataframe + export (§6.3)
+
+Presentation only. The two custom-HTML tables became sortable `st.dataframe`s
+with pandas Styler styling and report export:
+
+- **Stress results** (per KP): governing cell per column (max |value|) keeps
+  the amber highlight via a Styler `.apply`; fixed 2-decimal formatting;
+  `column_config` widths for KP/Description; the old redundant "↑ max |val|"
+  summary row was dropped (the governing banner now carries that).
+- **Margins**: the MS column is colored by `ui.theme.ms_status` (red < 0,
+  amber < 0.25, green ≥ 0.25 — same thresholds as the banner) instead of a
+  plain gradient, so it reads as pass/marginal/fail; "+HIGH" for MS > 10.
+- **Export** (`ui.components.table_export_controls`): a CSV download button +
+  a "Copy as Markdown" expander for each table, using a dependency-free
+  `df_to_markdown` (no `tabulate`), exporting the display-formatted values so
+  the copy matches the screen. For pasting into stress reports.
+
 ### 6C.2 — Clarify: the contour is always an FEM field
 
 No results change; labeling only. The interactive contour (and the report

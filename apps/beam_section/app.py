@@ -16,10 +16,10 @@ import matplotlib.pyplot as plt
 from ui.styles import inject_css
 from ui.components import (
     section_header, info_card,
-    html_table, ms_chip, render_formulae, estimated_flag,
-    stress_card_strip, governing_banner,
+    html_table, render_formulae, estimated_flag,
+    stress_card_strip, governing_banner, table_export_controls,
 )
-from ui.theme import THEME
+from ui.theme import THEME, ms_status
 
 from library.materials import MATERIALS, names_grouped
 from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
@@ -823,62 +823,44 @@ def render() -> None:
                        "interactive contour with a correct shear field.")
 
         section_header("Stress Results at Key Points",
-                       desc="all stresses in ksi")
+                       desc="all stresses in ksi — sortable; ⬇ to export")
 
         num_cols = ["σ_axial", "σ_bend", "σ_total",
                     "τ_Vy", "τ_Vz", "τ_T", "τ_total",
                     "σ1", "σ2", "σ_vm"]
 
-        # Find ALL rows that share the maximum absolute value per column.
-        # Ties due to symmetry are highlighted together, not just the first.
-        gov_max  = {c: df_stress[c].abs().max() for c in num_cols}
-        gov_mask = {c: df_stress[c].abs() >= gov_max[c] - 1e-9 for c in num_cols}
+        # Per-column governing value (max |val|); its cell(s) get an amber
+        # highlight in the Styler. Ties (symmetry) highlight together.
+        gov_max = {c: float(df_stress[c].abs().max()) for c in num_cols}
 
-        def _kp_label(c: str) -> str:
-            if gov_max[c] < 1e-9:
-                return "---"
-            if gov_mask[c].all():
-                return "ALL"
-            return ", ".join(df_stress.loc[gov_mask[c], "KP"].tolist())
+        disp = df_stress[["KP", "Description"] + num_cols].copy()
 
-        gov_kps  = {c: _kp_label(c) for c in num_cols}
-        gov_vals = {c: df_stress.loc[gov_mask[c], c].iloc[0] for c in num_cols}
+        def _hl_gov(col):
+            m = gov_max[col.name]
+            if m < 1e-9:
+                return [""] * len(col)
+            css = f"background-color:{t.amber_bg};color:{t.amber};font-weight:700;"
+            return [css if abs(v) >= m - 1e-9 else "" for v in col]
 
-        hdrs = ["KP", "Description"] + num_cols
-        rows_html: list[list[str]] = []
-        for i, row in df_stress.iterrows():
-            cells = [row["KP"], row["Description"]]
-            for c in num_cols:
-                v = row[c]
-                if gov_mask[c].loc[i]:
-                    cell = (
-                        f"<span style='background:{t.amber_bg};"
-                        f"color:{t.amber};font-weight:700;"
-                        f"padding:1px 4px;border-radius:3px;'>"
-                        f"{v:.2f}</span>"
-                    )
-                else:
-                    cell = f"{v:.2f}"
-                cells.append(cell)
-            rows_html.append(cells)
-
-        gov_row: list[str] = ["↑ max |val|", "—"]
-        for c in num_cols:
-            v = gov_vals[c]
-            gov_row.append(
-                f"<span style='color:{t.accent};font-size:10px;font-weight:700;'>"
-                f"{gov_kps[c]}<br>{v:.2f}</span>"
-            )
-        rows_html.append(gov_row)
-
-        html_table(
-            hdrs, rows_html,
-            col_aligns=["center", "left"] + ["center"] * len(num_cols),
+        sty = (disp.style
+               .format({c: "{:.2f}" for c in num_cols})
+               .apply(_hl_gov, subset=num_cols, axis=0))
+        st.dataframe(
+            sty, use_container_width=True, hide_index=True,
+            column_config={
+                "KP": st.column_config.TextColumn(width="small"),
+                "Description": st.column_config.TextColumn(width="medium"),
+            },
         )
         st.caption(
-            "Amber = governing (max-absolute) value per column. "
-            "Bottom row: governing KP and value."
+            "Amber = governing (max-|value|) cell per column. Click a column "
+            "header to sort."
         )
+
+        exp = disp.copy()
+        for c in num_cols:
+            exp[c] = exp[c].map(lambda v: f"{v:.2f}")
+        table_export_controls(exp, "stress_results.csv", "stress")
 
     # ═══════════════════════════ MARGINS ═══════════════════════════════
     with tab_marg:
@@ -894,27 +876,46 @@ def render() -> None:
         else:
             st.error(f"✗  NEGATIVE MARGIN DETECTED  |  Minimum MS = {min_ms:.3f}")
 
-        ms_rows: list[list[str]] = []
-        for _, row in df_ms.iterrows():
-            allow = row["Allow"]
-            allow_str = (f"{allow:.1f}" if isinstance(allow, (int, float))
-                         else str(allow))
-            applied = row["Applied"]
-            applied_str = (f"{float(applied):.2f}"
-                           if isinstance(applied, (int, float)) else str(applied))
-            ms_rows.append([
-                row["Check"], allow_str, f"{row['SF']:.2f}", applied_str,
-                ms_chip(row["MS"]),
-            ])
+        disp_ms = df_ms.rename(columns={
+            "Allow": "Allowable (ksi)", "Applied": "Applied (ksi)"}).copy()
 
-        html_table(
-            ["Check", "Allowable (ksi)", "SF", "Applied (ksi)", "MS"],
-            ms_rows,
-            col_aligns=["left", "center", "center", "center", "center"],
-        )
+        def _fmt_num(v):
+            return f"{v:.1f}" if isinstance(v, (int, float)) else str(v)
+
+        def _fmt_applied(v):
+            return f"{float(v):.2f}" if isinstance(v, (int, float)) else str(v)
+
+        def _fmt_ms(v):
+            if isinstance(v, (int, float)):
+                return "+HIGH" if v > 10 else f"{v:+.3f}"
+            return str(v)
+
+        def _color_ms(col):
+            out = []
+            for v in col:
+                if isinstance(v, (int, float)) and v < 999:
+                    bg, fg, _ = ms_status(v)
+                    out.append(f"background-color:{bg};color:{fg};font-weight:700;")
+                else:
+                    out.append("")
+            return out
+
+        sty_ms = (disp_ms.style
+                  .format({"Allowable (ksi)": _fmt_num, "SF": "{:.2f}",
+                           "Applied (ksi)": _fmt_applied, "MS": _fmt_ms})
+                  .apply(_color_ms, subset=["MS"]))
+        st.dataframe(sty_ms, use_container_width=True, hide_index=True)
         st.caption(
-            "+HIGH indicates MS > 10 — substantial reserve; exact value not shown."
+            "MS cell color: red < 0 (fail), amber < 0.25 (marginal), green ≥ "
+            "0.25 (pass) — thresholds from ui.theme. +HIGH = MS > 10."
         )
+
+        exp_ms = disp_ms.copy()
+        exp_ms["Allowable (ksi)"] = exp_ms["Allowable (ksi)"].map(_fmt_num)
+        exp_ms["Applied (ksi)"]   = exp_ms["Applied (ksi)"].map(_fmt_applied)
+        exp_ms["SF"]              = exp_ms["SF"].map(lambda v: f"{v:.2f}")
+        exp_ms["MS"]              = exp_ms["MS"].map(_fmt_ms)
+        table_export_controls(exp_ms, "margins.csv", "margins")
 
     # ═══════════════════════════ FORMULAS ══════════════════════════════
     with tab_form:

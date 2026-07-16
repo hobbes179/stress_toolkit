@@ -23,9 +23,40 @@ Usage:
 from __future__ import annotations
 from typing import Iterable, Sequence
 
+import pandas as pd
 import streamlit as st
 
 from ui.theme import THEME, ms_status
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# DataFrame export helpers (CSV + copy-as-Markdown) — no tabulate dependency
+# ──────────────────────────────────────────────────────────────────────────
+def df_to_markdown(df: pd.DataFrame) -> str:
+    """Render a DataFrame as a GitHub-flavored Markdown table (self-contained;
+    avoids the optional `tabulate` dependency). Cells are used verbatim, so
+    pass an already display-formatted frame for report-ready output."""
+    cols = [str(c) for c in df.columns]
+    lines = ["| " + " | ".join(cols) + " |",
+             "| " + " | ".join(["---"] * len(cols)) + " |"]
+    for _, row in df.iterrows():
+        lines.append("| " + " | ".join(str(row[c]) for c in df.columns) + " |")
+    return "\n".join(lines)
+
+
+def table_export_controls(display_df: pd.DataFrame, filename: str,
+                          key: str) -> None:
+    """A CSV download button + a 'Copy as Markdown' expander for a table.
+    `display_df` should already be display-formatted (strings) so the export
+    matches what's on screen."""
+    c1, c2 = st.columns([1, 3])
+    c1.download_button(
+        "⬇ CSV", display_df.to_csv(index=False).encode("utf-8"),
+        file_name=filename, mime="text/csv", key=f"{key}_csv",
+        use_container_width=True,
+    )
+    with c2.expander("Copy as Markdown"):
+        st.code(df_to_markdown(display_df), language="markdown")
 
 
 # ──────────────────────────────────────────────────────────────────────────
