@@ -229,6 +229,18 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
 
+        # Solver override (design handoff §2.3). FEM offered only if the
+        # sectionproperties backend is installed.
+        from library.analysis.fem_solver import fem_available, FEMSolver
+        _solver_opts = (["Auto", "Classical", "FEM"] if fem_available()
+                        else ["Auto", "Classical"])
+        solver_choice = st.selectbox(
+            "Solver", _solver_opts,
+            help="Auto: classical midline for open sections, VQ/It for "
+                 "solids/tubes. FEM: sectionproperties — for cross-checks and "
+                 "(later) arbitrary polygons.",
+        )
+
         section_header("Applied Loads")
         P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
         Vy = st.number_input("Vy — Shear Y (lb)",      value=0.0,    step=100., format="%.1f")
@@ -336,9 +348,20 @@ def render() -> None:
 
     loads = Loads(P=P, Vy=Vy, Vz=Vz, My=My, Mz=Mz, T=T)
 
+    # ── Solver identity (traceability — acceptance #7) ───────────────────
+    if solver_choice == "FEM":
+        solver_name = FEMSolver().name
+        solver_cite = FEMSolver().method_citation
+    elif section.category == "Open thin-walled" and solver_choice in ("Auto", "Classical"):
+        solver_name = "Classical midline (Bruhn)"
+        solver_cite = "Bruhn open-section shear flow; St-Venant open torsion J=ΣLt³/3"
+    else:
+        solver_name = "Exact / VQ-It closed form"
+        solver_cite = "Documented closed forms (Bredt for tubes)"
+
     # ── Calculations ─────────────────────────────────────────────────────
     try:
-        df_stress = calc_stress_at_points(section, loads)
+        df_stress = calc_stress_at_points(section, loads, solver=solver_choice)
         df_ms     = calc_margin_table(df_stress, material, section,
                                       sf_yield, sf_ult, loads)
         govs      = find_governing(df_stress)
@@ -361,10 +384,12 @@ def render() -> None:
         "<span>X = beam axis</span>"
         "<span>Y = horiz. right</span>"
         "<span>Z = vert. up</span>"
+        f"<span title='{solver_cite}'>Solver: <b>{solver_name}</b></span>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
     )
+    st.caption(f"Method: {solver_cite}")
 
     # ── 01 — Governing Stress Summary ────────────────────────────────────
     section_header("Governing Stress Summary", number="01",

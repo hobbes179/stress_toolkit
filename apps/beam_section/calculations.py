@@ -121,7 +121,47 @@ def shear_center(section: Section) -> tuple[float, float] | None:
     return classical_shear_center(geom, section.section_props())
 
 
-def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
+def _fem_precompute(section: Section, geom, loads: Loads, eval_pts):
+    """
+    FEM shear/normal stresses at the evaluation points (design handoff §4).
+    Because open-section torsion shear is zero on the wall midline and peaks
+    at the surface, each evaluation point is sampled as a small CLUSTER
+    (centre ± offsets); σ is read at the centre and τ is the cluster max, so
+    surface torsion is captured. Returns arrays (sigma, tvy, tvz, tT, ttot),
+    all in ksi.
+    """
+    from library.analysis.fem_solver import fem_stress_at, default_mesh_size
+
+    dims = [d for d in section.dims if d and d > 0]
+    min_wall = min(dims) if dims else None
+    ms = default_mesh_size(geom.outer, geom.voids, min_wall)
+
+    base = np.array([[y, z] for _, _, y, z in eval_pts], dtype=float)
+    d = (min_wall * 0.4 if (geom.nodes is not None and min_wall)
+         else 0.05 * max(section.cy(), section.cz(), 1.0))
+    offsets = np.array([[0, 0], [d, 0], [-d, 0], [0, d], [0, -d]], dtype=float)
+    cluster = (base[:, None, :] + offsets[None, :, :]).reshape(-1, 2)
+    n, k = len(base), len(offsets)
+
+    def _at(P, Vy, Vz, My, Mz, T):
+        sig, tau = fem_stress_at(geom.outer, geom.voids, ms,
+                                 P, Vy, Vz, My, Mz, T, cluster)
+        return sig.reshape(n, k), tau.reshape(n, k)
+
+    sig_all, tau_all = _at(loads.P, loads.Vy, loads.Vz, loads.My, loads.Mz, loads.T)
+    sigma = sig_all[:, 0]                     # centre point
+    ttot = np.nanmax(tau_all, axis=1)         # peak shear in the cluster
+    _, tvy_c = _at(0, loads.Vy, 0, 0, 0, 0)
+    _, tvz_c = _at(0, 0, loads.Vz, 0, 0, 0)
+    _, tT_c  = _at(0, 0, 0, 0, 0, loads.T)
+    tvy = np.nanmax(tvy_c, axis=1)
+    tvz = np.nanmax(tvz_c, axis=1)
+    tT  = np.nanmax(tT_c, axis=1)
+    return sigma, tvy, tvz, tT, ttot
+
+
+def calc_stress_at_points(section: Section, loads: Loads,
+                          solver: str = "Auto") -> pd.DataFrame:
     """
     Compute the full stress state at each evaluation point (design handoff
     §3.8). Returns a DataFrame with columns:
@@ -130,16 +170,22 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
         τ_Vy, τ_Vz, τ_T, τ_total,
         σ1, σ2, σ_vm
 
+    `solver` (design handoff §2.3 routing + override):
+      • "Auto"      — open thin-walled → classical midline solver; solids /
+                      closed tubes → VQ/It (corrected pairing).
+      • "Classical" — force the midline solver where a skeleton exists
+                      (falls back to Auto otherwise).
+      • "FEM"       — sectionproperties FEM on the section polygon (any shape;
+                      the only option for imported polygons in Phase 5).
+
     Shear handling (design handoff §3.2–3.3):
-      • Open thin-walled sections route through the ClassicalMidlineSolver:
-        per-point transverse shear flow (correct Vy↔Iz / Vz↔Iy pairing,
-        including Iyz) and open-section St-Venant torsion, combined
-        ALGEBRAICALLY (collinear along the wall): τ_wall = |τ_Vy+τ_Vz|+|τ_T|.
-      • Solids and closed tubes keep the legacy VQ/It path with the Phase-0
-        interim combination √(τ_Vy²+τ_Vz²)+|τ_T| until Phase 3 (ExactSolid /
-        closed-cell solvers). NOTE: the legacy VQ/It path still carries the
-        v1 transverse-shear axis pairing — see CHANGELOG.md; it is corrected
-        for open sections here and for solids/tubes in Phase 3.
+      • Classical open sections: per-point transverse shear flow (correct
+        Vy↔Iz / Vz↔Iy pairing, including Iyz) + open St-Venant torsion,
+        combined ALGEBRAICALLY: τ_wall = |τ_Vy+τ_Vz|+|τ_T|.
+      • Solids / closed tubes: VQ/It with the corrected axis pairing (§3.2)
+        and √(τ_Vy²+τ_Vz²)+|τ_T| (Phase 3).
+      • FEM: σ and the true combined τ come straight from the elasticity
+        solve (transverse + torsion combined by the FEM).
     """
     A   = section.area()
     Iy  = section.Iy()
@@ -154,9 +200,13 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
 
     eval_pts = _build_eval_points(section, loads)
     geom = section.geometry()
-    open_thin = geom.is_thin_walled and geom.nodes is not None
+    use_fem = (solver == "FEM")
+    open_thin = (not use_fem) and geom.is_thin_walled and geom.nodes is not None
 
-    if open_thin:
+    if use_fem:
+        fem_sigma, fem_tvy, fem_tvz, fem_tT, fem_ttot = _fem_precompute(
+            section, geom, loads, eval_pts)
+    elif open_thin:
         # Per-point shear flow from each transverse component (classical
         # midline solver); thickness t is the projected wall thickness.
         props = section.section_props()
@@ -175,10 +225,17 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
     for idx, (kid, desc, y, z) in enumerate(eval_pts):
         # Normal stresses (convert lb/in² → ksi via /1000)
         sa = loads.P / A / 1000 if A > 0 else 0.0
-        sb = (c_z * z + c_y * y) / 1000
-        sn = sa + sb
 
-        if open_thin:
+        if use_fem:
+            sn = float(fem_sigma[idx]) if math.isfinite(fem_sigma[idx]) else sa
+            sb = sn - sa
+            tvy = float(np.nan_to_num(fem_tvy[idx]))
+            tvz = float(np.nan_to_num(fem_tvz[idx]))
+            tau_T = float(np.nan_to_num(fem_tT[idx]))
+            tau_total = float(np.nan_to_num(fem_ttot[idx]))
+        elif open_thin:
+            sb = (c_z * z + c_y * y) / 1000
+            sn = sa + sb
             t = t_w[idx]
             tvy = q_vy[idx] / t / 1000 if t > 0 else 0.0
             tvz = q_vz[idx] / t / 1000 if t > 0 else 0.0
@@ -192,6 +249,8 @@ def calc_stress_at_points(section: Section, loads: Loads) -> pd.DataFrame:
             # (design handoff §3.2, CHANGELOG Phase 3): vertical shear Vz uses
             # the strong-axis quantities (Qy=∫z dA, Iy, tw_y) and horizontal
             # shear Vy uses (Qz=∫y dA, Iz, tw_z). v1 had these swapped.
+            sb = (c_z * z + c_y * y) / 1000
+            sn = sa + sb
             tvy = (loads.Vy * Qz / (Iz * tw_z) / 1000
                    if (Iz > 0 and tw_z > 0) else 0.0)
             tvz = (loads.Vz * Qy / (Iy * tw_y) / 1000

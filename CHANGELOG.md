@@ -7,6 +7,82 @@ commit adds an entry to this file.**
 
 ---
 
+## Phase 4 — FEM solver (sectionproperties) + routing (unreleased)
+
+Adds a finite-element section solver as a second, independent analysis path,
+proves its axis mapping by test, and lets the user switch solvers to
+cross-check. This does not change any Auto-path result — it adds a
+capability (and is the only path that will handle imported polygons in
+Phase 5).
+
+### 1. FEM wrapper — `library/analysis/fem_solver.py`
+
+Thin wrapper over `sectionproperties` (v3.7.3). Nothing outside this module
+imports the backend, and the import is lazy (inside functions), so app
+start-up and the non-FEM paths are unaffected. Provides A, Iy, Iz, Iyz, J,
+Cw, shear centre, and per-point σ / τ; meshed sections are cached
+(geometry-hash keyed, LRU-capped) so a loads-only change never re-meshes.
+
+### 2. Axis mapping — proved by test, not inspection (§4)
+
+`sectionproperties` uses an (x, y) section plane with z longitudinal; this
+project uses (y, z) with x longitudinal. The adapter maps our (y, z) →
+their (x, y) as identity coordinates, giving Iy=ixx, Iz=iyy, Iyz=ixy,
+J=j, Cw=gamma, shear-centre identity. Load mapping
+`n=P, mxx=My, myy=−Mz, mzz=T, vx=Vy, vy=Vz` — **the `myy=−Mz` sign flip was
+found by probing, not assumed**: `sectionproperties`' myy convention
+produces −σ at +y, opposite to this project's. Each component is unit-tested
+one at a time, both signs, on a rectangle and I-beam against the exact
+formula (`tests/test_phase4.py`), per the handoff's "prove the signs with
+tests" mandate. No unexplained fudge factors remain.
+
+### 3. Cross-solver agreement (§7.2 gate)
+
+Classical/analytic vs FEM for every thin-walled catalog shape:
+A / Iy / Iz / Iyz agree to ≤0.5% (machine-level for the analytic shapes),
+J to ≤3.5% and shear centre to ≤3% (thin-wall midline theory vs FEM differ
+legitimately by a couple of percent), transverse-shear τ to ≤7%, and
+open-section torsion τ to ≤10%. An additional cross-check confirms the FEM
+normal stress matches the Phase-1 unsymmetric-bending tensor at interior
+points of an L-section (Iyz ≠ 0) — validating the adapter and the tensor
+together.
+
+**Torsion sampling note:** open-section torsion shear is antisymmetric
+across the wall thickness — zero on the midline, peak at the surface. The
+§3.8 evaluation points sit on the midline, so the FEM path samples a small
+CLUSTER around each point (centre ± offsets) and takes the peak shear, so
+surface torsion is captured. Documented in `_fem_precompute`.
+
+### 4. Solver routing + UI override (§2.3)
+
+`calc_stress_at_points(section, loads, solver=...)`:
+Auto (open→classical, solid/tube→VQ/It), Classical, or FEM (any shape).
+A sidebar "Solver" selectbox exposes the choice — offered as
+Auto/Classical/FEM when the backend is installed, Auto/Classical otherwise —
+so a classical-vs-FEM cross-check is one click. The chosen solver's name and
+method citation (including the installed `sectionproperties` version) are
+shown in the results header (acceptance criterion #7).
+
+### 5. Dependencies
+
+`requirements.txt` adds `sectionproperties>=3.7,<4` and `shapely>=2.0`
+(sectionproperties also pulls in `cytriangle` and `scipy`). Verified to
+install and run on Windows / Python 3.10 locally.
+
+**⚠️ Deployment action for the project owner (handoff §4/§8):** these must
+also install on Streamlit Cloud. Deploy a throwaway branch and confirm the
+meshing backend builds there *before* relying on the FEM path in production —
+this is a user/deploy step the assistant cannot perform.
+
+### Tests
+
+`tests/test_phase4.py` (16, auto-skipped if sectionproperties is absent):
+axis-mapping sign proofs, L-section FEM-vs-tensor bending, §7.2 property
+agreement for all thin-walled shapes, transverse-shear and torsion-surface
+agreement, citation/version.
+
+---
+
 ## Phase 3 — solids, closed cells, induced torsion, warping screen (unreleased)
 
 Completes the shear/torsion methodology for the catalog: corrects the
