@@ -523,37 +523,45 @@ def render() -> None:
             )
 
         with tab_con:
-            _FIELD_LABELS = [
-                "Max Principal (σ₁)",
-                "Min Principal (σ₂)",
-                "Axial + Bending (σ_total)",
-                "Shear (τ_total)",
-                "Equivalent (σ_vm)",
-            ]
-            _FIELD_KEYS = {
-                "Max Principal (σ₁)":         "σ1",
-                "Min Principal (σ₂)":         "σ2",
-                "Axial + Bending (σ_total)":  "σ_total",
-                "Shear (τ_total)":            "τ_total",
-                "Equivalent (σ_vm)":          "σ_vm",
-            }
-            field_label = st.radio(
-                "Stress field",
-                _FIELD_LABELS,
-                horizontal=True,
-                key="contour_choice",
-            )
-            field_choice = _FIELD_KEYS[field_label]
-            with st.spinner("Computing stress field…"):
-                fig_con = draw_contour(section, loads, field_choice)
-            st.pyplot(fig_con, use_container_width=True)
-            plt.close(fig_con)
-            st.caption(
-                "Smooth contour from Delaunay triangulation. "
-                "Inner voids excluded automatically. "
-                "(Contour shear is an approximation pending the Phase-6 "
-                "overhaul; the results table uses the selected solver.)"
-            )
+            if fem_available():
+                # Interactive Plotly view with a real 2-D FEM stress field
+                # (correct shear) and a hover probe (design handoff §6.2).
+                from apps.beam_section.plotting_interactive import (
+                    interactive_stress_contour, FIELD_LABELS,
+                )
+                field_label = st.radio(
+                    "Stress field", list(FIELD_LABELS.keys()),
+                    horizontal=True, key="contour_choice",
+                )
+                with st.spinner("Computing FEM stress field…"):
+                    fig_i = interactive_stress_contour(
+                        section, loads, material, sf_yield, sf_ult,
+                        field_label, mesh_scale=mesh_scale)
+                st.plotly_chart(fig_i, use_container_width=True)
+                st.caption(
+                    "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
+                    "correct at every interior point (hover to probe). Peaks at "
+                    "sharp re-entrant corners are mesh-dependent (see warning)."
+                )
+                with st.expander("Report figure (matplotlib, print-quality)"):
+                    rlabel = st.radio(
+                        "Field", ["σ_total", "σ_vm", "σ1", "σ2", "τ_total"],
+                        horizontal=True, key="report_field")
+                    fig_con = draw_contour(section, loads, rlabel)
+                    st.pyplot(fig_con, use_container_width=True)
+                    plt.close(fig_con)
+            else:
+                # FEM backend absent → matplotlib fallback (shear approximate).
+                _FIELD_KEYS = {"Max Principal (σ₁)": "σ1", "Min Principal (σ₂)": "σ2",
+                               "Axial + Bending (σ_total)": "σ_total",
+                               "Shear (τ_total)": "τ_total", "Equivalent (σ_vm)": "σ_vm"}
+                field_label = st.radio("Stress field", list(_FIELD_KEYS.keys()),
+                                       horizontal=True, key="contour_choice")
+                fig_con = draw_contour(section, loads, _FIELD_KEYS[field_label])
+                st.pyplot(fig_con, use_container_width=True)
+                plt.close(fig_con)
+                st.caption("Install the FEM backend (sectionproperties) for the "
+                           "interactive contour with a correct shear field.")
 
         if solver_choice == "FEM":
             with _tabs[2]:

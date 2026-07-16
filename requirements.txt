@@ -4,6 +4,7 @@ streamlit>=1.28.0
 numpy>=1.24.0
 pandas>=1.5.0
 matplotlib>=3.6.0
+plotly>=5.18            # interactive stress contour (Phase 6); ships with streamlit
 
 # v2 — FEM solver (Phase 4). sectionproperties pulls in shapely + a meshing
 # backend (cytriangle) + scipy. Verify these install on Streamlit Cloud

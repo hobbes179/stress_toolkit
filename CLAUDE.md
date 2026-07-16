@@ -352,6 +352,18 @@ Planned modules:
     (cantilever, simply supported, fixed-fixed). Could share section
     properties from the beam section module.
 
+15. **Beam with Web Openings / Vierendeel** (`apps/web_opening/`) — WISH LIST,
+    not scheduled. Analysis of beams with web penetrations (MEP / conveyance
+    pass-throughs) per AISC Design Guide 2 (Steel & Composite Beams with Web
+    Openings) / the Darwin method. At an opening the section is two
+    disconnected tees and prismatic beam theory breaks down: global shear
+    splits between the tees and each carries local **Vierendeel bending** over
+    the opening length; governing stresses are at the opening corners
+    (global-moment axial ± Vierendeel bending). This is a distinct module, NOT
+    a cross-section calculation — the beam-section engine correctly refuses a
+    disconnected section. Would reuse the T-section properties for the tee
+    chords. Explicitly deferred at the owner's request (2026-07-16).
+
 ---
 
 ## Development conventions

@@ -34,6 +34,46 @@ work if convergent corner values are wanted.)
 
 ---
 
+## Phase 6 — UX / plotting overhaul (in progress, unreleased)
+
+### 6A — Interactive stress contour with a correct shear field (§6.2)
+
+Fixes the long-standing degenerate shear contour and adds the Plotly hover
+view. `apps/beam_section/plotting_interactive.py::interactive_stress_contour`
+builds the field from the **FEM elasticity solution** over a ~160×160 grid
+(mesh cached; ~0.6 s), so σ_x, τ, σ₁/σ₂, σ_vm and the local min-MS are all
+**correct at every interior point** and readable on hover. The legacy
+matplotlib contour computed shear from a single neutral-axis Q, so τ came out
+uniform across the whole section (verified: I-beam τ = 0.3794 everywhere) and
+rendered as a flat fill — that is now replaced.
+
+- **Hover probe** stacks σ_x, τ, σ₁, σ₂, σ_vm and min-MS into `customdata`
+  and shows all of them at the cursor (y, z). Cividis colormap.
+- **Overlays**: centroid, shear-centre marker, and the bending neutral-axis
+  line. (Principal-axes / load-arrow overlays and the annotated geometry
+  preview come in a later 6D step.)
+- **Report figure** retained: the matplotlib triangulated contour lives
+  behind an expander for print/screenshot use.
+- Falls back to the matplotlib contour if the FEM backend is absent.
+
+**Von Mises re-check (owner request):** the formula is confirmed correct —
+`σ_vm = √(σ₁² − σ₁σ₂ + σ₂²)` equals `√(σ² + 3τ²)` (the plane-stress
+uniaxial-normal + shear form) to machine precision, and the FEM results-table
+σ_vm matches `√(σ_total² + 3·τ_total²)` row-by-row. No change to the formula;
+the inputs are consistent across paths. Locked with tests.
+
+`requirements.txt` adds `plotly>=5.18` (ships with streamlit).
+
+Tests: `tests/test_phase6.py` (9) — von Mises identity, FEM-table σ_vm vs
+σ/τ, the shear field is non-degenerate (varies > 0.05 ksi across the section),
+and every field builds.
+
+Still to do in Phase 6: caching + fragments + load form (6B); tabbed layout +
+governing banner (6C); remaining overlays + annotated geometry preview (6D);
+results-table `st.dataframe` upgrades with CSV / copy-markdown (6E).
+
+---
+
 ## Phase 5 — custom-section import (DXF / pasted polygon) (unreleased)
 
 The v2 headline feature (decision D3): analyse an arbitrary cross-section,
