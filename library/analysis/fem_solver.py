@@ -86,8 +86,17 @@ def _get_meshed(outer: np.ndarray, voids, mesh_size: float):
     from sectionproperties.pre import Geometry
     from sectionproperties.analysis import Section
 
-    shell = [(float(y), float(z)) for y, z in np.asarray(outer)]
-    holes = [[(float(y), float(z)) for y, z in np.asarray(v)] for v in voids]
+    def _strip_dup(loop):
+        # A trailing duplicate closing vertex (circle/ellipse/tube polygons use
+        # linspace(0, 2π, N), so point[0] == point[-1]) creates a zero-length
+        # facet that makes the sectionproperties warping solve return NaN.
+        p = np.asarray(loop, dtype=float)
+        if len(p) >= 2 and np.allclose(p[0], p[-1]):
+            p = p[:-1]
+        return p
+
+    shell = [(float(y), float(z)) for y, z in _strip_dup(outer)]
+    holes = [[(float(y), float(z)) for y, z in _strip_dup(v)] for v in voids]
     poly = Polygon(shell, holes) if holes else Polygon(shell)
     geom = Geometry(poly)
     geom.create_mesh(mesh_sizes=[float(mesh_size)])

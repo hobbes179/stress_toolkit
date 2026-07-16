@@ -62,6 +62,19 @@ uniaxial-normal + shear form) to machine precision, and the FEM results-table
 σ_vm matches `√(σ_total² + 3·τ_total²)` row-by-row. No change to the formula;
 the inputs are consistent across paths. Locked with tests.
 
+**Colormap:** the contour uses **Jet** (classic blue→green→red stress-plot
+look, per owner preference) rather than the handoff's cividis suggestion.
+
+**Bug fixed — curved/hollow sections returned an empty contour:** the
+circle/ellipse/tube polygons close with a duplicate vertex (`linspace(0, 2π,
+N)` → point[0] == point[-1]), which created a zero-length facet that made the
+`sectionproperties` warping solve return **J = NaN** → all shear NaN → blank
+contour (most visible on the hollow circular tube). `fem_solver._get_meshed`
+now strips the trailing duplicate before meshing; FEM J for tube/circle/
+ellipse now matches the closed forms to ≤2%. This slipped through Phase 4
+because the cross-solver suite only exercised the open shapes. Regression
+tests added.
+
 `requirements.txt` adds `plotly>=5.18` (ships with streamlit).
 
 Tests: `tests/test_phase6.py` (9) — von Mises identity, FEM-table σ_vm vs

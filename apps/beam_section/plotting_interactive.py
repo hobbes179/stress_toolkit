@@ -133,7 +133,7 @@ def interactive_stress_contour(
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
         x=ys, y=zs, z=disp, customdata=customdata,
-        colorscale="Cividis", connectgaps=False,
+        colorscale="Jet", connectgaps=False,   # classic blue→green→red stress plot
         hovertemplate=hover,
         colorbar=dict(title=field_key),
     ))

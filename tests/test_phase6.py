@@ -61,3 +61,30 @@ def test_interactive_contour_builds_all_fields(field):
     fig = interactive_stress_contour(sec, Loads(Vz=500, My=2000), _MAT,
                                      1.0, 1.5, field)
     assert len(fig.data) >= 2                       # heatmap + outline(s)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Regression: closed/curved sections (duplicate closing vertex broke warping)
+# ──────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("name,dims", [
+    ("Circular Tube", [4, 0.25, None, None]),
+    ("Circle", [3, None, None, None]),
+    ("Ellipse", [2, 1, None, None]),
+])
+def test_fem_warping_finite_for_curved_sections(name, dims):
+    # The circle/ellipse/tube polygons close with a duplicate vertex; that
+    # used to make the sectionproperties warping solve return NaN J.
+    from library.analysis.fem_solver import fem_properties, default_mesh_size
+    sec = make_section(name, dims)
+    g = sec.geometry()
+    p = fem_properties(g.outer, g.voids, default_mesh_size(g.outer, g.voids, None))
+    assert math.isfinite(p["J"]) and p["J"] > 0
+    assert p["J"] == pytest.approx(sec.J_torsion(), rel=0.02)
+
+
+def test_hollow_tube_interactive_contour_not_empty():
+    sec = make_section("Circular Tube", [4, 0.25, None, None])
+    fig = interactive_stress_contour(sec, Loads(Vz=1000, My=2000, T=300),
+                                     _MAT, 1.0, 1.5, "σ_vm (von Mises)")
+    z = np.asarray(fig.data[0].z, dtype=float)
+    assert np.isfinite(z).sum() > 500               # the ring is populated
