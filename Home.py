@@ -1,6 +1,6 @@
 """
 Home.py
-TEST
+
 Top-level entry point for the Stress Toolkit on Streamlit Cloud.
 
 Landing page — module cards in the main content area link to each analysis
@@ -32,21 +32,19 @@ MODULES = [
     (
         "📐",
         "Beam Section Stress",
-        "Calculate normal, shear, principal, and von Mises stresses on a beam "
-        "cross-section under combined axial, shear, bending, and torsion loads. "
-        "Supports 11 standard shapes — rectangular, circular, hollow tubes, "
-        "I / T / L / C / Z rolled profiles, and more. Outputs margins of safety "
-        "against MMPDS-01 allowables and a smooth filled stress contour.",
+        "Combined-loading stress analysis of a cross-section — normal, shear, "
+        "principal, and von Mises — with margins of safety to MMPDS-01. "
+        "11 catalog shapes plus custom polygon / DXF import, an interactive FEM "
+        "stress contour, and a built-in validation page.",
         "pages/1_Beam_Section_Stress.py",
     ),
     (
         "📋",
         "Material Library",
-        "Browse all 24 metallic alloys in the toolkit across four categories: "
-        "aluminium, steel, titanium, and stainless. Tabulates room-temperature "
-        "minimum allowables (Fty, Ftu, Fcy, Fsu, Fbru, Fbry) and physical "
-        "properties (E, G, ν, α, T_max, ρ) sourced from MMPDS-01 with "
-        "citations. Estimated values are flagged.",
+        "24 metallic alloys — aluminium, steel, titanium, stainless — with "
+        "room-temperature MMPDS-01 allowables (Fty, Ftu, Fcy, Fsu, Fbru, Fbry) "
+        "and physical properties (E, G, ν, α, T_max, ρ). Estimated values "
+        "flagged with citations.",
         "pages/2_Material_Library.py",
     ),
 ]
@@ -54,13 +52,21 @@ MODULES = [
 
 # ── Header ────────────────────────────────────────────────────────────────
 st.markdown(
-    f"<div style='margin-bottom:4px;'>"
-    f"<h1 style='font-size:30px;font-weight:800;color:{t.accent2};margin:0;'>"
-    f"🛠️  Stress Toolkit</h1>"
-    f"<p style='font-size:13px;color:{t.muted};margin:8px 0 0;line-height:1.6;'>"
-    f"A collection of structural-analysis tools for metallic airframe design. "
-    f"Built on MMPDS-01 allowables, classical elasticity, and clean Python."
-    f"</p></div>",
+    f"<div style='margin-bottom:6px;'>"
+    f"<h1 style='font-size:32px;font-weight:800;color:{t.accent2};margin:0;"
+    f"letter-spacing:-0.01em;'>🛠️  Stress Toolkit</h1>"
+    f"<p style='font-size:14px;color:{t.text2};margin:10px 0 14px;"
+    f"line-height:1.65;max-width:64ch;'>"
+    f"Cross-section stress analysis for metallic airframe design — combined "
+    f"axial, shear, bending, and torsion, with margins of safety to MMPDS-01. "
+    f"Built for the rigor of a formal stress report.</p>"
+    f"<div class='tk-page-meta'>"
+    f"<span>MMPDS-01 allowables</span>"
+    f"<span>Classical + FEM solvers</span>"
+    f"<span>11 shapes + custom import</span>"
+    f"<span>Interactive stress contour</span>"
+    f"<span>Validation built in</span>"
+    f"</div></div>",
     unsafe_allow_html=True,
 )
 st.divider()
@@ -94,7 +100,7 @@ for col, (icon, title, desc, page_path) in zip(cols, MODULES):
         try:
             st.page_link(
                 page_path,
-                label=f"Open  {title}",
+                label=f"Open {title}  →",
                 use_container_width=True,
             )
         except Exception:

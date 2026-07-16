@@ -93,6 +93,19 @@ def _cached_validation_sweep():
     return validate_catalog_properties(1.0), validate_anchor_goldens(1.0)
 
 
+def _poly_to_vertex_text(section) -> str:
+    """
+    Format a section's polygon loops as vertex text for the custom-import box —
+    outer loop first, a blank line between loops (matches parse_vertex_text).
+    Lets the user start from a catalog shape and refine it.
+    """
+    blocks = []
+    for loop in section.polygon_vertices():
+        blocks.append("\n".join(f"{float(y):.4f}, {float(z):.4f}"
+                                for y, z in loop))
+    return "\n\n".join(blocks)
+
+
 def _tol_style(pct: float) -> str:
     """Cell CSS for a %Δ value: green < 1%, amber < 3%, red otherwise."""
     t = THEME
@@ -330,7 +343,11 @@ def render() -> None:
         project = st.text_input("Project / Component", value="")
 
         section_header("Material")
-        mat_name = st.selectbox("Material", names_grouped())
+        _mats = list(names_grouped())
+        mat_name = st.selectbox(
+            "Material", _mats,
+            index=_mats.index("6061-T6") if "6061-T6" in _mats else 0,
+        )
         material = MATERIALS[mat_name]
 
         c1, c2 = st.columns(2)
@@ -364,7 +381,11 @@ def render() -> None:
 
         if geom_source == "Catalog shape":
             is_imported = False
-            shape_name = st.selectbox("Section Shape", SHAPE_NAMES)
+            shape_name = st.selectbox(
+                "Section Shape", SHAPE_NAMES,
+                index=(SHAPE_NAMES.index("C-Beam / Channel")
+                       if "C-Beam / Channel" in SHAPE_NAMES else 0),
+            )
             cls      = SHAPE_REGISTRY[shape_name]
             labels   = cls.dim_labels
             defaults = cls.dim_defaults
@@ -387,6 +408,9 @@ def render() -> None:
             if dim_error:
                 st.error(dim_error)
                 st.stop()
+            # Seed the custom-import box with THIS shape's vertices so switching
+            # to "Custom import" starts from the shape currently on screen.
+            st.session_state["_import_seed"] = _poly_to_vertex_text(section)
         else:
             # ── Custom section import (design handoff §5) ────────────────
             is_imported = True
@@ -405,12 +429,17 @@ def render() -> None:
             loops = None
             try:
                 if import_mode == "Paste vertices":
+                    _seed = st.session_state.get(
+                        "_import_seed", "0, 0\n4, 0\n4, 2\n0, 2")
                     txt = st.text_area(
                         "Vertices — 'y, z' per line; blank line separates "
                         "loops (first loop = outer boundary)",
-                        value="0, 0\n4, 0\n4, 2\n0, 2",
+                        value=_seed,
                         height=170,
                     )
+                    st.caption("Pre-filled from the catalog shape you last "
+                               "viewed — edit the points to refine it, or paste "
+                               "your own.")
                     if txt.strip():
                         loops = parse_vertex_text(txt)
                 else:
@@ -472,13 +501,17 @@ def render() -> None:
             mesh_scale = {"Standard (2 elem / thickness)": 1.0,
                           "Fine": 0.5, "Very fine": 0.25}[_mesh_choice]
 
+        # Defaults: a channel under genuine combined loading (axial + vertical
+        # shear + biaxial bending + torsion) so the tool opens on a full
+        # demonstration — governing margin lands ~0.22 (approaching concern),
+        # not a near-infinite margin on an unloaded section.
         section_header("Applied Loads")
-        P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
-        Vy = st.number_input("Vy — Shear Y (lb)",      value=0.0,    step=100., format="%.1f")
-        Vz = st.number_input("Vz — Shear Z (lb)",      value=500.0,  step=100., format="%.1f")
-        My = st.number_input("My — Bending Y (lb·in)", value=1000.0, step=100., format="%.1f")
-        Mz = st.number_input("Mz — Bending Z (lb·in)", value=0.0,    step=100., format="%.1f")
-        T_applied = st.number_input("T — Torsion (lb·in)", value=0.0,
+        P  = st.number_input("P — Axial (lb)",         value=13000.0, step=100., format="%.1f")
+        Vy = st.number_input("Vy — Shear Y (lb)",      value=0.0,     step=100., format="%.1f")
+        Vz = st.number_input("Vz — Shear Z (lb)",      value=6500.0,  step=100., format="%.1f")
+        My = st.number_input("My — Bending Y (lb·in)", value=44000.0, step=100., format="%.1f")
+        Mz = st.number_input("Mz — Bending Z (lb·in)", value=5500.0,  step=100., format="%.1f")
+        T_applied = st.number_input("T — Torsion (lb·in)", value=2000.0,
                                     step=100., format="%.1f")
 
         # ── Shear application point → induced torsion (§3.4) ──────────────

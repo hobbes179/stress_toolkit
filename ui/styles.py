@@ -466,6 +466,33 @@ def inject_css() -> None:
         .tk-stress-grid {{ grid-template-columns: 1fr; }}
     }}
 
+    /* ── Landing-page CTA (st.page_link styled as a filled button that ──── */
+    /*    completes the module card above it) ───────────────────────────── */
+    [data-testid="stPageLink"] {{
+        margin-top: -1px !important;
+    }}
+    [data-testid="stPageLink"] a {{
+        background: {t.accent} !important;
+        border: 1px solid {t.accent} !important;
+        border-radius: 0 0 8px 8px !important;
+        padding: 13px 18px !important;
+        justify-content: center !important;
+        transition: background 0.15s ease !important;
+        box-shadow: 0 1px 2px rgba(11,42,122,0.10) !important;
+    }}
+    [data-testid="stPageLink"] a:hover {{
+        background: {t.accent2} !important;
+        border-color: {t.accent2} !important;
+    }}
+    [data-testid="stPageLink"] a p,
+    [data-testid="stPageLink"] a span,
+    [data-testid="stPageLink"] a div {{
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        font-family: "IBM Plex Sans", sans-serif !important;
+    }}
+
     /* ── Print ───────────────────────────────────────────────────────── */
     @media print {{
         [data-testid="stSidebar"], .stButton, footer {{ display: none !important; }}
