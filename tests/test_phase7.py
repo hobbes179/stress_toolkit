@@ -30,6 +30,27 @@ def test_catalog_classical_vs_fem_geometric_agree():
         f"{worst['Shape']} {worst['Property']} disagrees by {worst['Δ%']:.3f}%")
 
 
+def test_import_seed_caps_curved_shapes_and_reimports():
+    # Curved catalog shapes must seed the custom-import box with a manageable
+    # polygon (not ~180 points), and the seed must round-trip back into a valid
+    # imported section.
+    from library.shapes import make_section
+    from library.shapes.import_section import (
+        parse_vertex_text, make_imported_section,
+    )
+    from apps.beam_section.app import (
+        _poly_to_vertex_text, _IMPORT_SEED_MAX_PTS,
+    )
+    for name, dims in [("Circle", [3, None, None, None]),
+                       ("Ellipse", [2, 1, None, None]),
+                       ("Circular Tube", [4, 0.25, None, None])]:
+        sec = make_section(name, dims)
+        txt = _poly_to_vertex_text(sec)
+        for loop in txt.split("\n\n"):
+            assert 0 < len(loop.splitlines()) <= _IMPORT_SEED_MAX_PTS
+        make_imported_section(parse_vertex_text(txt))   # must not raise
+
+
 def test_anchor_goldens_match_reference():
     # Textbook reference (rectangle b·h³/12, circle πd⁴/64) must match BOTH the
     # classical closed form and the FEM solve.

@@ -93,16 +93,31 @@ def _cached_validation_sweep():
     return validate_catalog_properties(1.0), validate_anchor_goldens(1.0)
 
 
+_IMPORT_SEED_MAX_PTS = 32   # cap per loop so curved shapes don't flood the box
+
+
 def _poly_to_vertex_text(section) -> str:
     """
     Format a section's polygon loops as vertex text for the custom-import box —
     outer loop first, a blank line between loops (matches parse_vertex_text).
     Lets the user start from a catalog shape and refine it.
+
+    Curved shapes (circle / ellipse / tube) carry ~180 boundary points; those
+    are down-sampled to a ~32-point polygon so the box stays editable instead
+    of filling with hundreds of lines. Polygonal shapes (I, C, tubes' straight
+    walls) are well under the cap and pass through unchanged.
     """
     blocks = []
     for loop in section.polygon_vertices():
-        blocks.append("\n".join(f"{float(y):.4f}, {float(z):.4f}"
-                                for y, z in loop))
+        p = np.asarray(loop, dtype=float)
+        # Drop a trailing duplicate closing vertex (curved loops close on self).
+        if len(p) >= 2 and np.allclose(p[0], p[-1]):
+            p = p[:-1]
+        if len(p) > _IMPORT_SEED_MAX_PTS:
+            idx = np.linspace(0, len(p), _IMPORT_SEED_MAX_PTS,
+                              endpoint=False).astype(int)
+            p = p[idx]
+        blocks.append("\n".join(f"{y:.4f}, {z:.4f}" for y, z in p))
     return "\n\n".join(blocks)
 
 
