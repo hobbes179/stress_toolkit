@@ -17,7 +17,9 @@ pytest.importorskip("plotly")
 
 from library.shapes import make_section
 from apps.beam_section.calculations import Loads, calc_stress_at_points
-from apps.beam_section.plotting_interactive import interactive_stress_contour, FIELD_LABELS
+from apps.beam_section.plotting_interactive import (
+    interactive_stress_contour, compute_stress_field, FIELD_LABELS,
+)
 from library.materials import MATERIALS
 
 _MAT = MATERIALS[next(iter(MATERIALS))]
@@ -126,3 +128,24 @@ def test_contour_overlays_toggle_and_shear_point_and_mesh():
         sec, loads, _MAT, 1.0, 1.5, "τ (shear)", overlays=set())
     names2 = {tr.name for tr in fig2.data if tr.name}
     assert "centroid" not in names2 and "shear applied" not in names2
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Phase 6B caching: a reused (cached) field must match a fresh compute exactly
+# ──────────────────────────────────────────────────────────────────────────
+def test_precomputed_field_matches_fresh_solve():
+    sec = make_section("I-Beam / W-Shape", [4, 6, 0.375, 0.25])
+    loads = Loads(Vz=1000, My=1000, T=100)
+    field = compute_stress_field(sec, loads, 1.0, 100)
+    ys, zs, sig, tau = field
+    assert np.isfinite(sig).sum() > 100           # interior actually populated
+
+    fresh = interactive_stress_contour(sec, loads, _MAT, 1.0, 1.5,
+                                       "σ_vm (von Mises)", n_grid=100)
+    reuse = interactive_stress_contour(sec, loads, _MAT, 1.0, 1.5,
+                                       "σ_vm (von Mises)", field=field)
+    a = np.asarray(fresh.data[0].z, dtype=float)
+    b = np.asarray(reuse.data[0].z, dtype=float)
+    # NaN pattern identical, finite values identical.
+    assert np.array_equal(np.isnan(a), np.isnan(b))
+    np.testing.assert_allclose(np.nan_to_num(a), np.nan_to_num(b), rtol=1e-9)

@@ -7,6 +7,9 @@ Exports render() — called from pages/1_Beam_Section_Stress.py.
 
 from __future__ import annotations
 
+from dataclasses import astuple
+
+import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
 
@@ -27,6 +30,55 @@ from apps.beam_section.calculations import (
     warping_characteristic_length, fem_mesh_size_for,
 )
 from apps.beam_section.plotting import draw_section, draw_contour, draw_fem_mesh
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Caching layer (Phase 6B)
+# Streamlit reruns the whole script on every widget change. These wrappers key
+# the expensive FEM work on the geometry + loads + mesh so it is computed once
+# and reused: a full mesh+warping solve is ~4.5 s and the contour grid ~0.8 s,
+# but toggling an overlay or switching the displayed field changes neither.
+# Object args are passed underscore-prefixed so st.cache_data does NOT try to
+# hash them; the plain args form the cache key.
+# ──────────────────────────────────────────────────────────────────────────
+def _section_key(section) -> tuple:
+    """Hashable identity of a section for cache keys."""
+    if getattr(section, "is_imported", False):
+        import hashlib
+        g = section.geometry()
+        parts = [np.ascontiguousarray(np.round(g.outer, 9)).tobytes()]
+        for v in g.voids:
+            parts.append(np.ascontiguousarray(np.round(np.asarray(v), 9)).tobytes())
+        return ("imported", hashlib.md5(b"|".join(parts)).hexdigest())
+    return (section.name, tuple(section.dims))
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _cached_results(section_key, loads_key, mat_name, solver, mesh_scale,
+                    sf_yield, sf_ult, _section, _loads, _material):
+    """Stress table + margin table + governing rows (the sidebar-driven path)."""
+    df_stress = calc_stress_at_points(_section, _loads, solver=solver,
+                                      mesh_scale=mesh_scale)
+    df_ms = calc_margin_table(df_stress, _material, _section,
+                              sf_yield, sf_ult, _loads)
+    govs = find_governing(df_stress)
+    return df_stress, df_ms, govs
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _cached_stress_field(section_key, loads_key, mesh_scale, n_grid,
+                         _section, _loads):
+    """The interactive-contour FEM grid solve (ys, zs, sig, tau)."""
+    from apps.beam_section.plotting_interactive import compute_stress_field
+    return compute_stress_field(_section, _loads, mesh_scale, n_grid)
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _cached_jconv(section_key, mesh_size, _section):
+    """Coarse-vs-fine J-convergence delta for the FEM Mesh tab."""
+    from library.analysis.fem_solver import fem_j_convergence
+    g = _section.geometry()
+    return fem_j_convergence(g.outer, g.voids, mesh_size)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -427,13 +479,13 @@ def render() -> None:
         solver_name = "Exact / VQ-It closed form"
         solver_cite = "Documented closed forms (Bredt for tubes)"
 
-    # ── Calculations ─────────────────────────────────────────────────────
+    # ── Calculations (cached — see the caching layer above) ──────────────
+    section_key = _section_key(section)
+    loads_key   = astuple(loads)
     try:
-        df_stress = calc_stress_at_points(section, loads, solver=solver_choice,
-                                          mesh_scale=mesh_scale)
-        df_ms     = calc_margin_table(df_stress, material, section,
-                                      sf_yield, sf_ult, loads)
-        govs      = find_governing(df_stress)
+        df_stress, df_ms, govs = _cached_results(
+            section_key, loads_key, mat_name, solver_choice, mesh_scale,
+            sf_yield, sf_ult, section, loads, material)
     except Exception as e:
         st.error(f"Calculation error: {e}")
         import traceback
@@ -529,37 +581,50 @@ def render() -> None:
             if fem_available():
                 # Interactive Plotly view with a real 2-D FEM stress field
                 # (correct shear) and a hover probe (design handoff §6.2).
+                # Wrapped in a fragment so toggling an overlay or switching the
+                # displayed field reruns ONLY this block (and hits the cached
+                # field) — the rest of the page and the FEM solve don't re-fire.
                 from apps.beam_section.plotting_interactive import (
                     interactive_stress_contour, FIELD_LABELS,
                 )
-                field_label = st.radio(
-                    "Stress field", list(FIELD_LABELS.keys()),
-                    horizontal=True, key="contour_choice",
-                )
-                _oc = st.columns(5)
-                _ov = set()
-                if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
-                    _ov.add("centroid")
-                if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
-                    _ov.add("shear_center")
-                if _oc[2].checkbox("Neutral axis", value=True, key="ov_na"):
-                    _ov.add("neutral_axis")
-                if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
-                    _ov.add("shear_point")
-                _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
-                                             key="ov_mesh")
-                with st.spinner("Computing FEM stress field…"):
+
+                @st.fragment
+                def _contour_fragment():
+                    field_label = st.radio(
+                        "Stress field", list(FIELD_LABELS.keys()),
+                        horizontal=True, key="contour_choice",
+                    )
+                    _oc = st.columns(5)
+                    _ov = set()
+                    if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
+                        _ov.add("centroid")
+                    if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
+                        _ov.add("shear_center")
+                    if _oc[2].checkbox("Neutral axis", value=True, key="ov_na"):
+                        _ov.add("neutral_axis")
+                    if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
+                        _ov.add("shear_point")
+                    _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
+                                                 key="ov_mesh")
+                    with st.spinner("Computing FEM stress field…"):
+                        field = _cached_stress_field(
+                            section_key, loads_key, mesh_scale, 160,
+                            section, loads)
                     fig_i = interactive_stress_contour(
                         section, loads, material, sf_yield, sf_ult,
                         field_label, mesh_scale=mesh_scale,
                         shear_app=(y_app, z_app), overlays=_ov,
-                        show_mesh=_show_mesh)
-                st.plotly_chart(fig_i, use_container_width=True)
-                st.caption(
-                    "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
-                    "correct at every interior point (hover to probe). Peaks at "
-                    "sharp re-entrant corners are mesh-dependent (see warning)."
-                )
+                        show_mesh=_show_mesh, field=field)
+                    st.plotly_chart(fig_i, use_container_width=True)
+                    st.caption(
+                        "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
+                        "correct at every interior point (hover to probe). Peaks "
+                        "at sharp re-entrant corners are mesh-dependent (see "
+                        "warning)."
+                    )
+
+                _contour_fragment()
+
                 with st.expander("Report figure (matplotlib, print-quality)"):
                     rlabel = st.radio(
                         "Field", ["σ_total", "σ_vm", "σ1", "σ2", "τ_total"],
@@ -582,14 +647,12 @@ def render() -> None:
 
         if solver_choice == "FEM":
             with _tabs[2]:
-                from library.analysis.fem_solver import fem_j_convergence
                 ms = fem_mesh_size_for(section, mesh_scale)
-                g = section.geometry()
                 with st.spinner("Meshing…"):
                     fig_m = draw_fem_mesh(section, ms)
                 st.pyplot(fig_m, use_container_width=True)
                 plt.close(fig_m)
-                jc, jf, pct = fem_j_convergence(g.outer, g.voids, ms)
+                jc, jf, pct = _cached_jconv(section_key, ms, section)
                 flag = "✓" if pct < 2.0 else "⚠"
                 st.caption(
                     f"{flag} Coarse-vs-fine J sanity: J = {jc:.4f} in⁴ at this "

@@ -36,6 +36,38 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6B — Performance: caching + result fragment
+
+No results change; interaction latency only. Streamlit reruns the whole
+script on every widget change, so before this the app recomputed the FEM
+stress field (~0.8 s) on *every* overlay toggle or displayed-field switch,
+even though neither changes σ/τ. Measured pipeline: mesh+warping solve
+~4.5 s (already persisted across reruns by the module-level mesh cache),
+contour grid ~0.8 s, J-convergence ~1.4 s.
+
+- **`st.cache_data` layer** (app.py) keyed on geometry + loads + mesh:
+  `_cached_results` (stress + margin tables), `_cached_stress_field` (the
+  contour grid solve), `_cached_jconv` (mesh-tab J delta). Object args are
+  passed underscore-prefixed so only the lightweight key is hashed.
+- **Split `interactive_stress_contour`**: the expensive FEM grid solve moved
+  to a pure, picklable `compute_stress_field()`; the function now accepts a
+  precomputed `field=` so figure assembly (overlays, field selection) runs
+  without re-solving. The per-point min-MS loop was vectorized
+  (`_min_ms_field`) — numerically identical to the old scalar loop (0.0 err).
+- **`@st.fragment`** around the contour controls + chart: toggling an overlay
+  or switching the displayed field reruns only that fragment and hits the
+  cached field. Measured: contour rebuild with a reused field **0.016 s vs
+  0.93 s** for a full solve (~58×). The matplotlib report figure moved just
+  outside the fragment so it isn't redrawn on every overlay tick.
+
+Deliberately did **not** wrap loads in `st.form` (the handoff mentioned it):
+the sidebar's live induced-torsion and warping-screen feedback depend on
+reactive load values, and caching already makes a load edit cheap (mesh stays
+warm; only the ~0.8 s grid re-solves). Easy to add later if wanted.
+
+Tidy-up: removed unused `KeyPoint` import (calculations.py) and the now-dead
+`_point_min_ms` scalar helper (replaced by the vectorized field).
+
 ### 6A.2 — Mesh quality + contour overlays
 
 **Mesh sizing — guarantee ≥2 elements through wall thickness.**

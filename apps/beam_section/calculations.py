@@ -18,7 +18,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from library.shapes import Section, KeyPoint
+from library.shapes import Section
 from library.materials import Material
 from library.analysis.solvers import (
     classical_shear_flow_at, classical_J_open, classical_shear_center,

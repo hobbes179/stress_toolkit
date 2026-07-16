@@ -46,24 +46,63 @@ def _grid_mask(outer, voids, ys, zs):
     return inside.reshape(Z.shape), Y, Z
 
 
-def _point_min_ms(sx, tau, s1, s2, svm, material, sf_yield, sf_ult, fbu):
-    """Local minimum margin over the §3.6 checks (for the hover probe)."""
+def _min_ms_field(sig, tau, s1, s2, svm, material, sf_yield, sf_ult):
+    """
+    Vectorized local minimum margin over the §3.6 checks (for the hover probe).
+    Operates on the whole grid at once — replaces the old per-point Python loop.
+    NaN-masked points stay NaN (von-Mises term propagates the NaN).
+    """
     Fty = material.Fty or 0.0
     Ftu = material.Ftu or 0.0
     Fcy = material.Fcy or 0.0
     Fsu = material.Fsu or 0.0
 
     def ms(allow, sf, applied):
-        a = max(abs(applied), 1e-9)
-        return allow / (sf * a) - 1 if allow > 0 else np.inf
+        if allow <= 0:
+            return np.full_like(applied, np.inf)
+        return allow / (sf * np.maximum(np.abs(applied), 1e-9)) - 1.0
 
-    checks = [
-        ms(Fty, sf_yield, svm),                       # von Mises yield
-        ms(Ftu, sf_ult, s1) if s1 > 0 else np.inf,    # ultimate (tension)
-        ms(Fcy, sf_yield, s2) if s2 < 0 else np.inf,  # compression yield
-        ms(Fsu, sf_ult, tau),                         # shear ultimate
-    ]
-    return min(checks)
+    out = ms(Fty, sf_yield, svm)                                      # vM yield
+    out = np.minimum(out, np.where(s1 > 0, ms(Ftu, sf_ult, s1), np.inf))
+    out = np.minimum(out, np.where(s2 < 0, ms(Fcy, sf_yield, s2), np.inf))
+    out = np.minimum(out, ms(Fsu, sf_ult, tau))                      # shear ult
+    return out
+
+
+def compute_stress_field(section, loads: Loads, mesh_scale: float = 1.0,
+                         n_grid: int = 160):
+    """
+    The expensive half of the interactive contour: the FEM elasticity solve
+    over an n_grid × n_grid raster of the section. Returns (ys, zs, sig, tau)
+    with σ, τ in ksi and points outside the section/mesh set to NaN.
+
+    Pure and picklable — wrap in st.cache_data so overlay toggles and field
+    switches (which don't change σ/τ) never re-trigger the FEM solve.
+    """
+    from library.analysis.fem_solver import fem_stress_at
+    from apps.beam_section.calculations import fem_mesh_size_for
+
+    geom = section.geometry()
+    outer = np.asarray(geom.outer)
+    voids = [np.asarray(v) for v in geom.voids]
+    cy, cz = section.cy(), section.cz()
+
+    ys = np.linspace(-cy, cy, n_grid)
+    zs = np.linspace(-cz, cz, n_grid)
+    mask, Y, Z = _grid_mask(outer, voids, ys, zs)
+    pts = np.column_stack([Y.ravel(), Z.ravel()])
+
+    ms = fem_mesh_size_for(section, mesh_scale)
+    sig, tau = fem_stress_at(outer, voids, ms,
+                             loads.P, loads.Vy, loads.Vz,
+                             loads.My, loads.Mz, loads.T, pts)
+    sig = sig.reshape(Y.shape)
+    tau = tau.reshape(Y.shape)
+
+    valid = mask & np.isfinite(sig) & np.isfinite(tau)
+    sig = np.where(valid, sig, np.nan)
+    tau = np.where(valid, tau, np.nan)
+    return ys, zs, sig, tau
 
 
 def _mesh_edge_segments(section, mesh_scale):
@@ -90,6 +129,7 @@ def interactive_stress_contour(
     shear_app: tuple[float, float] | None = None,
     overlays: set[str] | None = None,
     show_mesh: bool = False,
+    field: tuple | None = None,
 ):
     """
     Build the Plotly interactive stress contour for `field_key` (a value of
@@ -100,10 +140,13 @@ def interactive_stress_contour(
     shear-application point is drawn when `shear_app=(y_app, z_app)` is given
     and "shear_point" is enabled. `show_mesh=True` overlays the FEM element
     edges.
+
+    `field` may be a precomputed (ys, zs, sig, tau) tuple from
+    compute_stress_field() — pass it (typically from an st.cache_data cache) to
+    skip the expensive FEM solve when only overlays or the displayed field
+    changed.
     """
     import plotly.graph_objects as go
-    from library.analysis.fem_solver import fem_stress_at, default_mesh_size
-    from apps.beam_section.calculations import fem_mesh_size_for
 
     if overlays is None:
         overlays = {"centroid", "shear_center", "neutral_axis", "shear_point"}
@@ -113,35 +156,19 @@ def interactive_stress_contour(
     voids = [np.asarray(v) for v in geom.voids]
     cy, cz = section.cy(), section.cz()
 
-    ys = np.linspace(-cy, cy, n_grid)
-    zs = np.linspace(-cz, cz, n_grid)
-    mask, Y, Z = _grid_mask(outer, voids, ys, zs)
-    pts = np.column_stack([Y.ravel(), Z.ravel()])
-
-    ms = fem_mesh_size_for(section, mesh_scale)
-    sig, tau = fem_stress_at(outer, voids, ms,
-                             loads.P, loads.Vy, loads.Vz,
-                             loads.My, loads.Mz, loads.T, pts)
-    sig = sig.reshape(Y.shape)
-    tau = tau.reshape(Y.shape)
-
-    # Only keep points that are both inside the polygon and inside the mesh.
-    valid = mask & np.isfinite(sig) & np.isfinite(tau)
-    sig = np.where(valid, sig, np.nan)
-    tau = np.where(valid, tau, np.nan)
+    # Expensive FEM grid solve — reuse a cached field when the caller supplies
+    # one; otherwise compute it here.
+    if field is None:
+        ys, zs, sig, tau = compute_stress_field(section, loads, mesh_scale, n_grid)
+    else:
+        ys, zs, sig, tau = field
 
     half = sig / 2.0
     radius = np.sqrt(half**2 + tau**2)
     s1 = half + radius
     s2 = half - radius
     svm = np.sqrt(np.clip(sig**2 + 3.0 * tau**2, 0, None))
-
-    fbu = section.effective_f_cozzone * (material.Ftu or 0.0)
-    ms_field = np.full(sig.shape, np.nan)
-    ii = np.where(valid)
-    for i, j in zip(*ii):
-        ms_field[i, j] = _point_min_ms(sig[i, j], tau[i, j], s1[i, j], s2[i, j],
-                                       svm[i, j], material, sf_yield, sf_ult, fbu)
+    ms_field = _min_ms_field(sig, tau, s1, s2, svm, material, sf_yield, sf_ult)
 
     fields = {"sx": sig, "tau": tau, "s1": s1, "s2": s2, "svm": svm, "ms": ms_field}
     fkey = FIELD_LABELS.get(field_key, "svm")
