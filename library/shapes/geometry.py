@@ -79,3 +79,36 @@ def ensure_cw(loop) -> np.ndarray:
     """Return the loop reordered so its winding is clockwise."""
     p = np.asarray(loop, dtype=float)
     return p[::-1].copy() if signed_area(p) > 0.0 else p.copy()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Point-in-polygon (ray casting) — pure numpy, no plotting dependency
+# ──────────────────────────────────────────────────────────────────────────
+def point_in_loop(y: float, z: float, loop) -> bool:
+    """Ray-casting point-in-polygon test for a single loop (N, 2) of (y, z)."""
+    p = np.asarray(loop, dtype=float)
+    if len(p) >= 2 and np.allclose(p[0], p[-1]):
+        p = p[:-1]
+    n = len(p)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        yi, zi = p[i]
+        yj, zj = p[j]
+        if ((zi > z) != (zj > z)) and \
+           (y < (yj - yi) * (z - zi) / (zj - zi + 1e-30) + yi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def point_in_section(y: float, z: float, outer, voids=()) -> bool:
+    """True if (y, z) is inside `outer` and outside every void loop."""
+    if not point_in_loop(y, z, outer):
+        return False
+    for void in voids:
+        if point_in_loop(y, z, void):
+            return False
+    return True

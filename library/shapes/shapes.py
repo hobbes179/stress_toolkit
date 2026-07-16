@@ -213,16 +213,31 @@ class Section:
         return self.f_cozzone
 
     # ── Geometry / polygon-derived properties (Phase 1) ──────────────────
+    def _midline(self) -> tuple[Optional[np.ndarray], tuple]:
+        """
+        Midline skeleton hook (design handoff §2.1, Phase 2).
+
+        Returns (nodes, segments):
+            nodes    — (M, 2) array of midline node coords (centroid-relative,
+                       (y, z)), or None if the shape has no skeleton.
+            segments — tuple of MidlineSegment(n1, n2, t).
+
+        Default: no skeleton (solids, and closed tubes until Phase 3).
+        Open thin-walled shapes override this to return their wall
+        centerline graph. All open-section skeletons are trees (no closed
+        cells), so `cells` stays empty.
+        """
+        return None, ()
+
     def geometry(self) -> SectionGeometry:
         """
         Build the shape's SectionGeometry (design handoff §2.1).
 
-        Default implementation derives the outer boundary and voids from
-        `polygon_vertices()` (loop 0 = outer, remaining loops = voids),
-        normalizing winding to the CCW-outer / CW-void convention. Solids
-        and Phase-1 thin-walled shapes leave the midline skeleton empty;
-        thin-walled catalog shapes override this in Phase 2 to populate
-        nodes/segments/cells.
+        Derives the outer boundary and voids from `polygon_vertices()`
+        (loop 0 = outer, remaining loops = voids), normalizing winding to
+        the CCW-outer / CW-void convention, and attaches the midline
+        skeleton from `_midline()` (populated for open thin-walled shapes
+        in Phase 2; empty for solids and closed tubes).
         """
         loops = self.polygon_vertices()
         if not loops:
@@ -230,8 +245,12 @@ class Section:
                                    is_thin_walled=self.is_thin_walled)
         outer = ensure_ccw(loops[0])
         voids = tuple(ensure_cw(loop) for loop in loops[1:])
-        return SectionGeometry(outer=outer, voids=voids,
-                               is_thin_walled=self.is_thin_walled)
+        nodes, segments = self._midline()
+        return SectionGeometry(
+            outer=outer, voids=voids,
+            nodes=nodes, segments=segments,
+            is_thin_walled=self.is_thin_walled,
+        )
 
     def section_props(self) -> PolygonProps:
         """
@@ -854,6 +873,26 @@ class IBeam(Section):
             KeyPoint("H", "Web-flange re-entrant",  -tw/2,   d/2 - tf),
         ]
 
+    def _midline(self):
+        bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
+        hw = d / 2 - tf / 2          # flange-midline z (centroid at origin)
+        nodes = np.array([
+            (0.0, -hw),              # 0 web bottom junction
+            (0.0,  hw),              # 1 web top junction
+            (-bf/2,  hw),            # 2 top-flange left tip
+            ( bf/2,  hw),            # 3 top-flange right tip
+            (-bf/2, -hw),            # 4 bot-flange left tip
+            ( bf/2, -hw),            # 5 bot-flange right tip
+        ])
+        segments = (
+            MidlineSegment(0, 1, tw),   # web
+            MidlineSegment(2, 1, tf),   # top flange, left half
+            MidlineSegment(1, 3, tf),   # top flange, right half
+            MidlineSegment(4, 0, tf),   # bot flange, left half
+            MidlineSegment(0, 5, tf),   # bot flange, right half
+        )
+        return nodes, segments
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # T-BEAM
@@ -953,6 +992,24 @@ class TBeam(Section):
             KeyPoint("F", "Web bottom — left",       -tw/2,  0 - zb),
             KeyPoint("G", "Centroid",                 0,     0),
         ]
+
+    def _midline(self):
+        bf, tf, hw, tw = self.d1, self.d2, self.d3, self.d4
+        _, zb = self.centroid()
+        flange_z = hw + tf / 2 - zb   # flange-midline z (centroid-relative)
+        web_bot_z = 0.0 - zb          # actual web bottom (free edge)
+        nodes = np.array([
+            (0.0, web_bot_z),         # 0 web bottom (free edge)
+            (0.0, flange_z),          # 1 web-flange junction
+            (-bf/2, flange_z),        # 2 flange left tip
+            ( bf/2, flange_z),        # 3 flange right tip
+        ])
+        segments = (
+            MidlineSegment(0, 1, tw),   # web
+            MidlineSegment(2, 1, tf),   # flange, left half
+            MidlineSegment(1, 3, tf),   # flange, right half
+        )
+        return nodes, segments
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1063,6 +1120,22 @@ class LBeam(Section):
             KeyPoint("G", "Centroid",                0,         0),
         ]
 
+    def _midline(self):
+        b, h, tb, th = self.d1, self.d2, self.d3, self.d4
+        yb, zb = self.centroid()
+        corner_y = th / 2 - yb        # vertical-leg midline y
+        corner_z = tb / 2 - zb        # horizontal-leg midline z
+        nodes = np.array([
+            (corner_y, corner_z),     # 0 corner junction
+            (b - yb,   corner_z),     # 1 horizontal-leg tip
+            (corner_y, h - zb),       # 2 vertical-leg tip
+        ])
+        segments = (
+            MidlineSegment(0, 1, tb),   # horizontal leg
+            MidlineSegment(0, 2, th),   # vertical leg
+        )
+        return nodes, segments
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # C-BEAM / CHANNEL
@@ -1172,6 +1245,25 @@ class CBeam(Section):
             KeyPoint("G", "Web bot",             0 - yb,   -d/2 + tf),
         ]
 
+    def _midline(self):
+        bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
+        yb, _ = self.centroid()
+        web_y = tw / 2 - yb           # web midline y (centroid-relative)
+        half = d / 2 - tf / 2         # flange-midline z
+        tip_y = bf - yb               # flange tip y
+        nodes = np.array([
+            (web_y, -half),           # 0 web bottom junction
+            (web_y,  half),           # 1 web top junction
+            (tip_y,  half),           # 2 top-flange tip
+            (tip_y, -half),           # 3 bot-flange tip
+        ])
+        segments = (
+            MidlineSegment(0, 1, tw),   # web
+            MidlineSegment(1, 2, tf),   # top flange
+            MidlineSegment(0, 3, tf),   # bottom flange
+        )
+        return nodes, segments
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Z-BEAM
@@ -1279,6 +1371,24 @@ class ZBeam(Section):
             KeyPoint("E", "Web mid — max shear",    0,               0),
         ]
 
+    def _midline(self):
+        bf, d, tf, tw = self.d1, self.d2, self.d3, self.d4
+        half = d / 2 - tf / 2         # flange-midline z (centroid at origin)
+        tip = bf - tw / 2             # flange-midline length from web center
+        # Point-symmetric: bottom flange extends +Y, top flange extends −Y.
+        nodes = np.array([
+            (0.0, -half),             # 0 web bottom junction
+            (0.0,  half),             # 1 web top junction
+            ( tip, -half),            # 2 bottom-flange tip (+Y)
+            (-tip,  half),            # 3 top-flange tip (−Y)
+        ])
+        segments = (
+            MidlineSegment(0, 1, tw),   # web
+            MidlineSegment(0, 2, tf),   # bottom flange
+            MidlineSegment(1, 3, tf),   # top flange
+        )
+        return nodes, segments
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # PLUS / CROSS
@@ -1375,6 +1485,24 @@ class PlusCross(Section):
             KeyPoint("F", "Top-left re-entrant",    -tv/2, th/2),
             KeyPoint("G", "Centroid — max shear",    0,    0),
         ]
+
+    def _midline(self):
+        b, h, th, tv = self.d1, self.d2, self.d3, self.d4
+        # Star skeleton: central junction with four arms (centroid at origin).
+        nodes = np.array([
+            (0.0,  0.0),              # 0 center junction
+            ( b/2, 0.0),              # 1 right arm tip
+            (-b/2, 0.0),              # 2 left arm tip
+            (0.0,  h/2),              # 3 top arm tip
+            (0.0, -h/2),              # 4 bottom arm tip
+        ])
+        segments = (
+            MidlineSegment(0, 1, th),   # right (horizontal bar)
+            MidlineSegment(0, 2, th),   # left  (horizontal bar)
+            MidlineSegment(0, 3, tv),   # top   (vertical bar)
+            MidlineSegment(0, 4, tv),   # bottom(vertical bar)
+        )
+        return nodes, segments
 
 
 # ══════════════════════════════════════════════════════════════════════════
