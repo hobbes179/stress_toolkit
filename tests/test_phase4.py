@@ -24,8 +24,9 @@ sp = pytest.importorskip("sectionproperties")
 from library.shapes import make_section, SHAPE_REGISTRY
 from library.analysis.fem_solver import (
     fem_properties, fem_stress_at, default_mesh_size, FEMSolver,
-    sectionproperties_version,
+    sectionproperties_version, fem_element_count, fem_j_convergence,
 )
+from apps.beam_section.calculations import fem_mesh_size_for
 from library.analysis.solvers import classical_shear_flow_at, classical_J_open
 from apps.beam_section.calculations import shear_center
 
@@ -171,3 +172,25 @@ def test_cross_solver_open_torsion_surface(shape_name):
 def test_fem_solver_citation_has_version():
     cite = FEMSolver().method_citation
     assert sectionproperties_version() in cite
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Mesh refinement control + coarse-vs-fine J sanity delta
+# ──────────────────────────────────────────────────────────────────────────
+def test_mesh_refinement_scales_element_count():
+    sec = make_section("I-Beam / W-Shape", [4, 6, 0.375, 0.25])
+    g = sec.geometry()
+    n = {}
+    for label, scale in [("Coarse", 4.0), ("Default", 1.0), ("Fine", 0.25)]:
+        ms = fem_mesh_size_for(sec, scale)
+        n[label] = fem_element_count(g.outer, g.voids, ms)
+    assert n["Coarse"] < n["Default"] < n["Fine"]
+
+
+def test_fem_j_convergence_delta_shrinks_with_refinement():
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    g = sec.geometry()
+    _, _, pct_default = fem_j_convergence(g.outer, g.voids, fem_mesh_size_for(sec, 1.0))
+    _, _, pct_fine = fem_j_convergence(g.outer, g.voids, fem_mesh_size_for(sec, 0.25))
+    assert pct_default < 3.0            # already well-converged at the default mesh
+    assert pct_fine <= pct_default

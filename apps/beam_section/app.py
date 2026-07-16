@@ -24,9 +24,9 @@ from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
     neutral_axis_angle_deg, shear_center, induced_torsion,
-    warping_characteristic_length,
+    warping_characteristic_length, fem_mesh_size_for,
 )
-from apps.beam_section.plotting import draw_section, draw_contour
+from apps.beam_section.plotting import draw_section, draw_contour, draw_fem_mesh
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -240,6 +240,15 @@ def render() -> None:
                  "solids/tubes. FEM: sectionproperties — for cross-checks and "
                  "(later) arbitrary polygons.",
         )
+        mesh_scale = 1.0
+        if solver_choice == "FEM":
+            _mesh_choice = st.selectbox(
+                "FEM mesh refinement", ["Default", "Coarse", "Fine"],
+                help="Max element area vs the auto heuristic (~min-wall²/2). "
+                     "Finer = more accurate, slower (the warping solve is the "
+                     "slow step).",
+            )
+            mesh_scale = {"Coarse": 4.0, "Default": 1.0, "Fine": 0.25}[_mesh_choice]
 
         section_header("Applied Loads")
         P  = st.number_input("P — Axial (lb)",         value=0.0,    step=100., format="%.1f")
@@ -361,7 +370,8 @@ def render() -> None:
 
     # ── Calculations ─────────────────────────────────────────────────────
     try:
-        df_stress = calc_stress_at_points(section, loads, solver=solver_choice)
+        df_stress = calc_stress_at_points(section, loads, solver=solver_choice,
+                                          mesh_scale=mesh_scale)
         df_ms     = calc_margin_table(df_stress, material, section,
                                       sf_yield, sf_ult, loads)
         govs      = find_governing(df_stress)
@@ -420,7 +430,11 @@ def render() -> None:
     col_left, col_right = st.columns([2, 1], gap="large")
 
     with col_left:
-        tab_sec, tab_con = st.tabs(["Section Diagram", "Stress Contour"])
+        _tab_labels = ["Section Diagram", "Stress Contour"]
+        if solver_choice == "FEM":
+            _tab_labels.append("FEM Mesh")
+        _tabs = st.tabs(_tab_labels)
+        tab_sec, tab_con = _tabs[0], _tabs[1]
 
         with tab_sec:
             kps = section.key_points(loads.My, loads.Mz)
@@ -464,8 +478,27 @@ def render() -> None:
             plt.close(fig_con)
             st.caption(
                 "Smooth contour from Delaunay triangulation. "
-                "Inner voids excluded automatically."
+                "Inner voids excluded automatically. "
+                "(Contour shear is an approximation pending the Phase-6 "
+                "overhaul; the results table uses the selected solver.)"
             )
+
+        if solver_choice == "FEM":
+            with _tabs[2]:
+                from library.analysis.fem_solver import fem_j_convergence
+                ms = fem_mesh_size_for(section, mesh_scale)
+                g = section.geometry()
+                with st.spinner("Meshing…"):
+                    fig_m = draw_fem_mesh(section, ms)
+                st.pyplot(fig_m, use_container_width=True)
+                plt.close(fig_m)
+                jc, jf, pct = fem_j_convergence(g.outer, g.voids, ms)
+                flag = "✓" if pct < 2.0 else "⚠"
+                st.caption(
+                    f"{flag} Coarse-vs-fine J sanity: J = {jc:.4f} in⁴ at this "
+                    f"mesh vs {jf:.4f} in⁴ at 4× finer → Δ = {pct:.1f}% "
+                    f"(mesh converged if small; refine if large)."
+                )
 
     with col_right:
         section_header("Material")

@@ -103,6 +103,38 @@ def _get_meshed(outer: np.ndarray, voids, mesh_size: float):
     return sec
 
 
+def fem_mesh(outer: np.ndarray, voids, mesh_size: float):
+    """
+    Return the meshed triangulation as (vertices (N,2) in our (y,z), triangles
+    (M,3) corner-node indices). sectionproperties uses 6-node quadratic
+    triangles; only the three corner nodes are returned (enough to draw the
+    element edges).
+    """
+    sec = _get_meshed(outer, voids, mesh_size)
+    m = sec.mesh
+    verts = np.asarray(m["vertices"], dtype=float)
+    tris = np.asarray(m["triangles"], dtype=int)[:, :3]
+    return verts, tris
+
+
+def fem_element_count(outer: np.ndarray, voids, mesh_size: float) -> int:
+    """Number of triangular elements in the mesh."""
+    sec = _get_meshed(outer, voids, mesh_size)
+    return int(np.asarray(sec.mesh["triangles"]).shape[0])
+
+
+def fem_j_convergence(outer: np.ndarray, voids, mesh_size: float):
+    """
+    Coarse-vs-fine sanity delta on the torsion constant J (design handoff §4):
+    compares J at `mesh_size` against J at a 4× finer element area
+    (~half linear element size). Returns (J_chosen, J_fine, pct_delta).
+    """
+    j_chosen = fem_properties(outer, voids, mesh_size)["J"]
+    j_fine = fem_properties(outer, voids, mesh_size / 4.0)["J"]
+    pct = abs(j_fine - j_chosen) / j_fine * 100.0 if j_fine else 0.0
+    return j_chosen, j_fine, pct
+
+
 def default_mesh_size(outer: np.ndarray, voids, min_wall: float | None = None) -> float:
     """
     Mesh size heuristic (design handoff §4): ~(min wall thickness)²/2 for

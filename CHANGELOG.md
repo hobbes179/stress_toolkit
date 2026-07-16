@@ -74,12 +74,34 @@ also install on Streamlit Cloud. Deploy a throwaway branch and confirm the
 meshing backend builds there *before* relying on the FEM path in production —
 this is a user/deploy step the assistant cannot perform.
 
+### 6. Mesh refinement control + mesh visualization (Phase 4 follow-on)
+
+Closes the two §4 UI items skipped in the first Phase-4 commit:
+
+- **Mesh refinement selector** — a sidebar "FEM mesh refinement"
+  Coarse / Default / Fine control (shown only when the FEM solver is
+  selected), mapping to element-area scales ×4 / ×1 / ×0.25 of the
+  `default_mesh_size` heuristic. Threaded through
+  `calc_stress_at_points(..., mesh_scale=)` and
+  `fem_mesh_size_for(section, mesh_scale)` so the stress path, the mesh view,
+  and the J check all use the same mesh.
+- **Coarse-vs-fine J sanity delta** — the FEM Mesh tab reports J at the
+  chosen mesh vs J at 4× finer, with the % delta (`fem_j_convergence`), the
+  convergence check the handoff asked for. On the default I-beam mesh this
+  is ~0.7%.
+- **FEM Mesh view** — a new "FEM Mesh" tab (FEM solver only) renders the
+  `sectionproperties` triangulation via `plotting.draw_fem_mesh`, drawn in
+  the project's white print theme with the crisp section outline overlaid
+  and the element count in the title. The mesh was previously computed but
+  never shown.
+
 ### Tests
 
-`tests/test_phase4.py` (16, auto-skipped if sectionproperties is absent):
+`tests/test_phase4.py` (18, auto-skipped if sectionproperties is absent):
 axis-mapping sign proofs, L-section FEM-vs-tensor bending, §7.2 property
 agreement for all thin-walled shapes, transverse-shear and torsion-surface
-agreement, citation/version.
+agreement, citation/version, mesh-refinement element scaling, and the
+J-convergence delta.
 
 ---
 

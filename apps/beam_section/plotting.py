@@ -147,6 +147,46 @@ def draw_section(section: Section, kps: Sequence[KeyPoint]):
     return fig
 
 
+def draw_fem_mesh(section: Section, mesh_size: float):
+    """
+    Draw the sectionproperties FEM triangulation for the section, in the
+    project's print-friendly white theme. Returns the figure. The element
+    count is shown in the title.
+    """
+    from library.analysis.fem_solver import fem_mesh, fem_element_count
+
+    P = PLOT_PALETTE
+    fig, ax = plt.subplots(figsize=(6, 6), facecolor=P["background"])
+    ax.set_facecolor(P["background"])
+
+    verts, tris = fem_mesh(section.geometry().outer, section.geometry().voids, mesh_size)
+    n_el = fem_element_count(section.geometry().outer, section.geometry().voids, mesh_size)
+    triang = mtri.Triangulation(verts[:, 0], verts[:, 1], tris)
+    ax.triplot(triang, color=P["section_edge"], lw=0.35, alpha=0.75)
+
+    # Crisp section outline on top (outer + voids).
+    for poly in section.polygon_vertices():
+        ax.add_patch(MplPolygon(
+            poly, closed=True, fill=False,
+            edgecolor=P["section_edge"], linewidth=1.8, zorder=5,
+        ))
+
+    cy, cz = section.cy(), section.cz()
+    pad = max(cy, cz) * 0.15
+    ax.set_xlim(-cy - pad, cy + pad)
+    ax.set_ylim(-cz - pad, cz + pad)
+    ax.set_xlabel("y  (in)", fontsize=9, color=P["text"])
+    ax.set_ylabel("z  (in)", fontsize=9, color=P["text"])
+    ax.set_aspect("equal", "box")
+    ax.tick_params(labelsize=8, colors=P["tick"])
+    for sp in ax.spines.values():
+        sp.set_edgecolor(P["spine"])
+    ax.set_title(f"FEM mesh — {section.name}  |  {n_el} elements",
+                 fontsize=8, color=P["text"], pad=8)
+    fig.tight_layout()
+    return fig
+
+
 def _is_clockwise(verts: np.ndarray) -> bool:
     """Shoelace formula sign — True if vertices are clockwise ordered."""
     s = 0.0

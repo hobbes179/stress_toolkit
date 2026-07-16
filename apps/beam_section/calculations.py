@@ -121,7 +121,22 @@ def shear_center(section: Section) -> tuple[float, float] | None:
     return classical_shear_center(geom, section.section_props())
 
 
-def _fem_precompute(section: Section, geom, loads: Loads, eval_pts):
+def fem_mesh_size_for(section: Section, mesh_scale: float = 1.0) -> float:
+    """
+    Effective FEM mesh size (max element area) for a section, = the
+    default_mesh_size heuristic times `mesh_scale` (Coarse=4, Default=1,
+    Fine=0.25). Shared by the stress path and the mesh-view / J-delta so they
+    always use the same mesh.
+    """
+    from library.analysis.fem_solver import default_mesh_size
+    g = section.geometry()
+    dims = [d for d in section.dims if d and d > 0]
+    min_wall = min(dims) if dims else None
+    return default_mesh_size(g.outer, g.voids, min_wall) * mesh_scale
+
+
+def _fem_precompute(section: Section, geom, loads: Loads, eval_pts,
+                    mesh_scale: float = 1.0):
     """
     FEM shear/normal stresses at the evaluation points (design handoff §4).
     Because open-section torsion shear is zero on the wall midline and peaks
@@ -130,11 +145,11 @@ def _fem_precompute(section: Section, geom, loads: Loads, eval_pts):
     surface torsion is captured. Returns arrays (sigma, tvy, tvz, tT, ttot),
     all in ksi.
     """
-    from library.analysis.fem_solver import fem_stress_at, default_mesh_size
+    from library.analysis.fem_solver import fem_stress_at
 
     dims = [d for d in section.dims if d and d > 0]
     min_wall = min(dims) if dims else None
-    ms = default_mesh_size(geom.outer, geom.voids, min_wall)
+    ms = fem_mesh_size_for(section, mesh_scale)
 
     base = np.array([[y, z] for _, _, y, z in eval_pts], dtype=float)
     d = (min_wall * 0.4 if (geom.nodes is not None and min_wall)
@@ -161,7 +176,8 @@ def _fem_precompute(section: Section, geom, loads: Loads, eval_pts):
 
 
 def calc_stress_at_points(section: Section, loads: Loads,
-                          solver: str = "Auto") -> pd.DataFrame:
+                          solver: str = "Auto",
+                          mesh_scale: float = 1.0) -> pd.DataFrame:
     """
     Compute the full stress state at each evaluation point (design handoff
     §3.8). Returns a DataFrame with columns:
@@ -205,7 +221,7 @@ def calc_stress_at_points(section: Section, loads: Loads,
 
     if use_fem:
         fem_sigma, fem_tvy, fem_tvz, fem_tT, fem_ttot = _fem_precompute(
-            section, geom, loads, eval_pts)
+            section, geom, loads, eval_pts, mesh_scale)
     elif open_thin:
         # Per-point shear flow from each transverse component (classical
         # midline solver); thickness t is the projected wall thickness.
