@@ -324,6 +324,21 @@ for A36, A572, and 300M.
     compact format next to the section diagram — reducing the need to scroll
     to the full results table to understand which point governs.
 
+10a. **Classical-mode contour view** (wish list, requested 2026-07-16)
+    Currently the Stress Contour is *always* an FEM field, even when a
+    classical/exact solver is selected, because the classical solvers produce
+    values only at key points and along the wall midline — not a continuous
+    2-D field (a labeled `st.info` explains this in the Results tab). Wish:
+    when classical analysis applies, offer a **classical view tab** that shows
+    what the classical solver actually computes rather than borrowing the FEM
+    field — e.g. the section diagram annotated with per-key-point stress
+    values, and (for open sections) the shear-flow q(s) plotted along the wall
+    midline. This makes the plot honestly reflect the classical method instead
+    of showing an FEM mesh under an "exact" label, and avoids running the FEM
+    solve at all in classical mode. Keep the FEM contour available as the
+    cross-check view. See CHANGELOG "6C.2 — Clarify: the contour is always an
+    FEM field."
+
 ### Long-term (new modules)
 
 Each new module follows the same pattern:
