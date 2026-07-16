@@ -34,6 +34,30 @@ work if convergent corner values are wanted.)
 
 ---
 
+## Phase 7 — Validation page, docs, release (in progress)
+
+### 7.1 — In-app Validation page (§7.4)
+
+The Validation tab now has two parts:
+
+- **Current section** — FEM vs analytic closed form for A, Iy, Iz, J (as
+  before), with tolerance-colored %Δ.
+- **Full-catalog cross-check** — an on-demand, cached sweep over every catalog
+  shape comparing the classical closed form against the FEM geometric solve
+  for A, Iy, Iz, plus a **textbook anchor** table (rectangle b·h³/12, circle
+  π d⁴/64) showing reference vs classical vs FEM. Colored by tolerance
+  (green < 1%, amber < 3%, red ≥ 3%). Measured worst disagreement across the
+  catalog: **0.04%**.
+
+Single source of truth: `tests/golden_values.py` gained `VALIDATION_SWEEP`
+(the shape list) and `anchor_goldens()`; the page and the new
+`tests/test_phase7.py` consume the SAME shared helpers
+(`calculations.validate_catalog_properties` / `validate_anchor_goldens`), so a
+regression in either the closed forms or the FEM solve fails CI, not just the
+page. New `fem_solver.fem_geometric_properties` runs a geometric-only solve
+(no warping) so the 11-shape sweep completes in ~1.3 s instead of paying the
+warping cost 11×.
+
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
 ### 6D — Contour overlays + annotated geometry (§6.3)

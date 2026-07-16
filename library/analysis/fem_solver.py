@@ -183,6 +183,48 @@ def fem_properties(outer: np.ndarray, voids=(), mesh_size: float = 0.05) -> dict
     }
 
 
+_GEOM_CACHE: dict = {}
+
+
+def fem_geometric_properties(outer: np.ndarray, voids=(),
+                             mesh_size: float = 0.05) -> dict:
+    """
+    A, Iy, Iz, Iyz from a GEOMETRIC-only FEM solve (no warping) — much faster
+    than fem_properties (which also runs the warping BVP for J/Cw). Used by the
+    Validation-page catalog sweep so it doesn't pay the warping cost 11×.
+
+    If a full warping-solved section is already cached for this key, its
+    geometric properties are reused rather than re-meshing.
+    """
+    key = _geom_key(outer, voids, mesh_size)
+    sec = _MESH_CACHE.get(key) or _GEOM_CACHE.get(key)
+    if sec is None:
+        from shapely import Polygon
+        from sectionproperties.pre import Geometry
+        from sectionproperties.analysis import Section
+
+        def _strip_dup(loop):
+            p = np.asarray(loop, dtype=float)
+            if len(p) >= 2 and np.allclose(p[0], p[-1]):
+                p = p[:-1]
+            return p
+
+        shell = [(float(y), float(z)) for y, z in _strip_dup(outer)]
+        holes = [[(float(y), float(z)) for y, z in _strip_dup(v)] for v in voids]
+        poly = Polygon(shell, holes) if holes else Polygon(shell)
+        geom = Geometry(poly)
+        geom.create_mesh(mesh_sizes=[float(mesh_size)])
+        sec = Section(geom)
+        sec.calculate_geometric_properties()
+        _GEOM_CACHE[key] = sec
+        if len(_GEOM_CACHE) > _CACHE_MAX:
+            _GEOM_CACHE.pop(next(iter(_GEOM_CACHE)))
+
+    ixx, iyy, ixy = sec.get_ic()
+    return {"A": float(sec.get_area()), "Iy": float(ixx),
+            "Iz": float(iyy), "Iyz": float(ixy)}
+
+
 def fem_stress_at(outer: np.ndarray, voids, mesh_size: float,
                   P: float, Vy: float, Vz: float,
                   My: float, Mz: float, T: float,

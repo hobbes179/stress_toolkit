@@ -561,6 +561,59 @@ def neutral_axis_angle_deg(section: Section, loads: Loads) -> float | None:
     return math.degrees(math.atan2(-c_y, c_z))
 
 
+def validate_catalog_properties(mesh_scale: float = 1.0) -> list[dict]:
+    """
+    Classical closed-form vs FEM geometric properties (A, Iy, Iz) for every
+    shape in golden_values.VALIDATION_SWEEP. Returns row dicts
+    {Shape, Property, Closed-form, FEM, Δ%}. Shared by the in-app Validation
+    page (design handoff §7.4) and the cross-solver test — golden_values is the
+    single source of truth for the shape list.
+    """
+    from library.shapes import make_section
+    from library.analysis.fem_solver import fem_geometric_properties
+    import tests.golden_values as gv
+
+    rows: list[dict] = []
+    for name, dims in gv.VALIDATION_SWEEP:
+        sec = make_section(name, list(dims))
+        g = sec.geometry()
+        ms = fem_mesh_size_for(sec, mesh_scale)
+        fp = fem_geometric_properties(g.outer, g.voids, ms)
+        for prop, classical in [("A", sec.area()), ("Iy", sec.Iy()),
+                                ("Iz", sec.Iz())]:
+            femv = fp[prop]
+            pct = abs(femv - classical) / abs(classical) * 100 if classical else 0.0
+            rows.append({"Shape": name, "Property": prop,
+                         "Closed-form": classical, "FEM": femv, "Δ%": pct})
+    return rows
+
+
+def validate_anchor_goldens(mesh_scale: float = 1.0) -> list[dict]:
+    """
+    Textbook reference vs classical closed-form vs FEM for the anchor shapes
+    (golden_values.anchor_goldens) — proves both engines match an independent
+    hand-derived reference. Geometric properties only (A, Iy, Iz).
+    """
+    from library.shapes import make_section
+    from library.analysis.fem_solver import fem_geometric_properties
+    import tests.golden_values as gv
+
+    rows: list[dict] = []
+    for name, dims, ref in gv.anchor_goldens():
+        sec = make_section(name, list(dims))
+        g = sec.geometry()
+        ms = fem_mesh_size_for(sec, mesh_scale)
+        fp = fem_geometric_properties(g.outer, g.voids, ms)
+        classical = {"A": sec.area(), "Iy": sec.Iy(), "Iz": sec.Iz()}
+        for prop in ("A", "Iy", "Iz"):
+            if prop not in ref:
+                continue
+            rows.append({"Shape": name, "Property": prop,
+                         "Reference": ref[prop], "Closed-form": classical[prop],
+                         "FEM": fp[prop]})
+    return rows
+
+
 def principal_axis_angle_deg(section: Section) -> float:
     """
     Angle (degrees, from the +Y axis) of one principal centroidal axis of the

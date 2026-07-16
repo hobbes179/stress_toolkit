@@ -83,20 +83,43 @@ def _cached_jconv(section_key, mesh_size, _section):
     return fem_j_convergence(g.outer, g.voids, mesh_size)
 
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_validation_sweep():
+    """Full-catalog classical-vs-FEM sweep + textbook anchors for the
+    Validation page (design handoff §7.4). Cached — computed once on demand."""
+    from apps.beam_section.calculations import (
+        validate_catalog_properties, validate_anchor_goldens,
+    )
+    return validate_catalog_properties(1.0), validate_anchor_goldens(1.0)
+
+
+def _tol_style(pct: float) -> str:
+    """Cell CSS for a %Δ value: green < 1%, amber < 3%, red otherwise."""
+    t = THEME
+    if pct < 1.0:
+        bg, fg = t.pass_bg, t.pass_fg
+    elif pct < 3.0:
+        bg, fg = t.warn_bg, t.warn_fg
+    else:
+        bg, fg = t.fail_bg, t.fail_fg
+    return f"background-color:{bg};color:{fg};font-weight:700;"
+
+
 def _render_validation(section, mesh_scale) -> None:
     """
-    Validation tab: a lightweight FEM-vs-closed-form section-property
-    cross-check (A, Iy, Iz, J). Previews the full per-shape validation page
-    that lands in Phase 7 (§7.4); the FEM solve here reuses the cached mesh.
+    Validation tab (design handoff §7.4). Two parts:
+      1. Current-section FEM-vs-closed-form cross-check (A, Iy, Iz, J).
+      2. On-demand full-catalog sweep + textbook anchor goldens, sourced from
+         tests/golden_values.py (single source of truth). Cached.
     """
     from library.analysis.fem_solver import fem_available
     section_header("Validation", desc="independent cross-checks")
     if not fem_available():
         st.info("Install the FEM backend (sectionproperties) for cross-solver "
-                "validation. The full per-shape validation page arrives in "
-                "Phase 7.")
+                "validation.")
         return
 
+    # ── 1. Current section: FEM vs closed-form (incl. J) ─────────────────
     from library.analysis.fem_solver import fem_properties
     g = section.geometry()
     ms = fem_mesh_size_for(section, mesh_scale)
@@ -104,42 +127,69 @@ def _render_validation(section, mesh_scale) -> None:
         fp = fem_properties(g.outer, g.voids, ms)   # cached mesh → cheap
     except Exception as e:                            # noqa: BLE001
         st.warning(f"FEM property solve unavailable: {e}")
-        return
+        fp = None
 
-    t = THEME
+    if fp is not None:
+        st.markdown("**Current section** — FEM vs analytic closed form")
+        rows = []
+        for lbl, cval, fval in [
+            ("A",  section.area(),      fp["A"]),
+            ("Iy", section.Iy(),        fp["Iy"]),
+            ("Iz", section.Iz(),        fp["Iz"]),
+            ("J",  section.J_torsion(), fp["J"]),
+        ]:
+            pct = abs(fval - cval) / abs(cval) * 100 if cval else 0.0
+            chip = (f"<span style='{_tol_style(pct)}padding:1px 6px;"
+                    f"border-radius:3px;'>{pct:.2f}%</span>")
+            rows.append([lbl, f"{cval:.4f}", f"{fval:.4f}", chip])
+        html_table(["Property", "Closed-form", "FEM", "Δ"], rows,
+                   col_aligns=["center", "right", "right", "center"])
+        st.caption(
+            "A larger Δ on J for open sections reflects FEM corner resolution "
+            "vs the ΣLt³/3 thin-wall idealization — expected, not an error."
+        )
 
-    def _chip(pct: float) -> str:
-        if pct < 2.0:
-            bg, fg, lab = t.pass_bg, t.pass_fg, "✓"
-        elif pct < 5.0:
-            bg, fg, lab = t.warn_bg, t.warn_fg, "~"
-        else:
-            bg, fg, lab = t.fail_bg, t.fail_fg, "✗"
-        return (f"<span style='background:{bg};color:{fg};font-weight:700;"
-                f"padding:1px 6px;border-radius:3px;'>{lab} {pct:.2f}%</span>")
+    st.divider()
 
-    rows: list[list[str]] = []
-    for lbl, cls_val, fem_val, unit in [
-        ("A",  section.area(),      fp["A"],  "in²"),
-        ("Iy", section.Iy(),        fp["Iy"], "in⁴"),
-        ("Iz", section.Iz(),        fp["Iz"], "in⁴"),
-        ("J",  section.J_torsion(), fp["J"],  "in⁴"),
-    ]:
-        pct = abs(fem_val - cls_val) / abs(cls_val) * 100 if cls_val else 0.0
-        rows.append([lbl, f"{cls_val:.4f}", f"{fem_val:.4f}", unit, _chip(pct)])
-
-    html_table(
-        ["Property", "Closed-form", "FEM", "unit", "Δ"], rows,
-        col_aligns=["center", "right", "right", "center", "center"],
-    )
+    # ── 2. Full-catalog cross-solver sweep + textbook anchors ────────────
+    section_header("Full-catalog cross-check",
+                   desc="every shape: classical closed-form vs FEM")
     st.caption(
-        "Section-property cross-check: the FEM (sectionproperties) solve vs the "
-        "shape's analytic closed form. Small Δ confirms the mesh and the axis "
-        "mapping. A larger Δ on J for open sections reflects FEM corner "
-        "resolution vs the ΣLt³/3 thin-wall idealization — expected, not an "
-        "error. The full validation page (classical | FEM | reference | %Δ per "
-        "shape) arrives in Phase 7."
+        "Independent evidence that the two engines agree across the whole "
+        "catalog. Computed on demand and cached. Source of truth: "
+        "`tests/golden_values.py` (shared with the pytest suite)."
     )
+    if st.button("Run full-catalog validation", key="run_val", type="primary"):
+        st.session_state["_val_ran"] = True
+    if st.session_state.get("_val_ran"):
+        with st.spinner("Solving all catalog shapes…"):
+            sweep_rows, anchor_rows = _cached_validation_sweep()
+
+        import pandas as pd
+        sweep = pd.DataFrame(sweep_rows)
+        sty = (sweep.style
+               .format({"Closed-form": "{:.4f}", "FEM": "{:.4f}",
+                        "Δ%": "{:.3f}"})
+               .apply(lambda col: [_tol_style(v) for v in col], subset=["Δ%"]))
+        st.dataframe(sty, use_container_width=True, hide_index=True)
+        worst = max(r["Δ%"] for r in sweep_rows)
+        (st.success if worst < 1.0 else st.warning)(
+            f"Largest classical-vs-FEM disagreement across the catalog: "
+            f"{worst:.3f}% (A, Iy, Iz). Green < 1%, amber < 3%, red ≥ 3%."
+        )
+
+        st.markdown("**Textbook anchors** — reference vs classical vs FEM")
+        anchor = pd.DataFrame(anchor_rows)
+        st.dataframe(
+            anchor.style.format(
+                {"Reference": "{:.4f}", "Closed-form": "{:.4f}", "FEM": "{:.4f}"}),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(
+            "The closed-form and FEM values both matched against an "
+            "independent hand-derived reference (rectangle b·h³/12, circle "
+            "πd⁴/64). Confirms the property engine and the axis mapping."
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────

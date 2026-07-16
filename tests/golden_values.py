@@ -95,6 +95,42 @@ def uniform_channel_shear_center_offset(b: float, h: float) -> float:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# In-app Validation page (design handoff §7.4) — single source of truth
+# ──────────────────────────────────────────────────────────────────────────
+# Catalog shapes swept by the Validation page and the cross-solver pytest.
+# Each: (shape_name, dims). Classical closed-form vs FEM geometric properties
+# (A, Iy, Iz) are compared for every one; they must agree tightly.
+VALIDATION_SWEEP = [
+    ("Rectangle",         [2.0, 3.0, None, None]),
+    ("Circle",            [3.0, None, None, None]),
+    ("Ellipse",           [2.0, 1.0, None, None]),
+    ("Rect Tube (HSS)",   [3.0, 4.0, 0.25, 0.25]),
+    ("Circular Tube",     [4.0, 0.25, None, None]),
+    ("I-Beam / W-Shape",  [4.0, 6.0, 0.375, 0.25]),
+    ("T-Beam",            [4.0, 0.375, 4.0, 0.25]),
+    ("L-Beam / Angle",    [3.0, 3.0, 0.25, 0.25]),
+    ("C-Beam / Channel",  [3.0, 6.0, 0.375, 0.25]),
+    ("Z-Beam",            [3.0, 6.0, 0.375, 0.25]),
+    ("Plus / Cross",      [3.0, 3.0, 0.25, 0.25]),
+]
+
+
+def anchor_goldens() -> list:
+    """
+    Textbook reference properties for the Validation-page anchor table — the
+    handful of shapes with a clean hand-derivable closed form, used to prove
+    BOTH the classical closed-form AND the FEM solve match an independent
+    reference. Returns [(shape_name, dims, {prop: value}), ...].
+    """
+    circ = circle_props(3.0)
+    return [
+        ("Rectangle", [2.0, 3.0, None, None], rectangle_props(2.0, 3.0)),
+        ("Circle",    [3.0, None, None, None],
+         {k: circ[k] for k in ("A", "Iy", "Iz", "J")}),
+    ]
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Interaction-curve goldens (design handoff §3.6 / §7.1)
 # ──────────────────────────────────────────────────────────────────────────
 # (Ra, Rb, Rs, expected MS) — both are exact zero-margin states.
