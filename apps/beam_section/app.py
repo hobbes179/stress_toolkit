@@ -17,7 +17,7 @@ from ui.styles import inject_css
 from ui.components import (
     section_header, info_card,
     html_table, ms_chip, render_formulae, estimated_flag,
-    stress_card_strip,
+    stress_card_strip, governing_banner,
 )
 from ui.theme import THEME
 
@@ -27,7 +27,7 @@ from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
     neutral_axis_angle_deg, shear_center, induced_torsion,
-    warping_characteristic_length, fem_mesh_size_for,
+    warping_characteristic_length, fem_mesh_size_for, governing_summary,
 )
 from apps.beam_section.plotting import draw_section, draw_contour, draw_fem_mesh
 
@@ -79,6 +79,65 @@ def _cached_jconv(section_key, mesh_size, _section):
     from library.analysis.fem_solver import fem_j_convergence
     g = _section.geometry()
     return fem_j_convergence(g.outer, g.voids, mesh_size)
+
+
+def _render_validation(section, mesh_scale) -> None:
+    """
+    Validation tab: a lightweight FEM-vs-closed-form section-property
+    cross-check (A, Iy, Iz, J). Previews the full per-shape validation page
+    that lands in Phase 7 (§7.4); the FEM solve here reuses the cached mesh.
+    """
+    from library.analysis.fem_solver import fem_available
+    section_header("Validation", desc="independent cross-checks")
+    if not fem_available():
+        st.info("Install the FEM backend (sectionproperties) for cross-solver "
+                "validation. The full per-shape validation page arrives in "
+                "Phase 7.")
+        return
+
+    from library.analysis.fem_solver import fem_properties
+    g = section.geometry()
+    ms = fem_mesh_size_for(section, mesh_scale)
+    try:
+        fp = fem_properties(g.outer, g.voids, ms)   # cached mesh → cheap
+    except Exception as e:                            # noqa: BLE001
+        st.warning(f"FEM property solve unavailable: {e}")
+        return
+
+    t = THEME
+
+    def _chip(pct: float) -> str:
+        if pct < 2.0:
+            bg, fg, lab = t.pass_bg, t.pass_fg, "✓"
+        elif pct < 5.0:
+            bg, fg, lab = t.warn_bg, t.warn_fg, "~"
+        else:
+            bg, fg, lab = t.fail_bg, t.fail_fg, "✗"
+        return (f"<span style='background:{bg};color:{fg};font-weight:700;"
+                f"padding:1px 6px;border-radius:3px;'>{lab} {pct:.2f}%</span>")
+
+    rows: list[list[str]] = []
+    for lbl, cls_val, fem_val, unit in [
+        ("A",  section.area(),      fp["A"],  "in²"),
+        ("Iy", section.Iy(),        fp["Iy"], "in⁴"),
+        ("Iz", section.Iz(),        fp["Iz"], "in⁴"),
+        ("J",  section.J_torsion(), fp["J"],  "in⁴"),
+    ]:
+        pct = abs(fem_val - cls_val) / abs(cls_val) * 100 if cls_val else 0.0
+        rows.append([lbl, f"{cls_val:.4f}", f"{fem_val:.4f}", unit, _chip(pct)])
+
+    html_table(
+        ["Property", "Closed-form", "FEM", "unit", "Δ"], rows,
+        col_aligns=["center", "right", "right", "center", "center"],
+    )
+    st.caption(
+        "Section-property cross-check: the FEM (sectionproperties) solve vs the "
+        "shape's analytic closed form. Small Δ confirms the mesh and the axis "
+        "mapping. A larger Δ on J for open sections reflects FEM corner "
+        "resolution vs the ΣLt³/3 thin-wall idealization — expected, not an "
+        "error. The full validation page (classical | FEM | reference | %Δ per "
+        "shape) arrives in Phase 7."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -514,6 +573,10 @@ def render() -> None:
     )
     st.caption(f"Method: {solver_cite}")
 
+    # ── Governing banner (persistent, above the tabs — §6.3) ─────────────
+    _min_ms, _gov_check, _gov_loc = governing_summary(df_stress, df_ms)
+    governing_banner(_min_ms, _gov_check, _gov_loc, solver_name)
+
     if solver_choice == "FEM":
         st.warning(
             "**FEM captures stress concentrations at sharp re-entrant corners** "
@@ -524,312 +587,311 @@ def render() -> None:
             "**grows as the mesh refines** (try the mesh selector) and is *not* a "
             "converged design value — model a fillet radius for real corner "
             "stresses. Away from corners the two solvers agree (see the "
-            "Validation checks).",
+            "Validation tab).",
             icon="⚠️",
         )
 
-    # ── 01 — Governing Stress Summary ────────────────────────────────────
-    section_header("Governing Stress Summary", number="01",
-                   desc="extreme-fiber results across the section")
-
     fbu = section.effective_f_cozzone * (material.Ftu or 0.0)
     cozzone_gated = section.effective_f_cozzone != section.f_cozzone
-    # Order must track find_governing()'s output order (σ1, σ2, σ_vm,
-    # τ_total, σ_bend) and pair each with the allowable its §3.6 check
-    # actually uses (v1.1.0): σ1↔Ftu, σ2↔Fcy, σ_vm↔Fty, τ↔Fsu. σ_bend has
-    # no standalone check post-v1.1.0 (folds into the Rb interaction term)
-    # — paired with Fbu for display continuity only.
-    stress_allowables = [
-        (material.Ftu or 0.0, "Ftu", sf_ult),
-        (material.Fcy or 0.0, "Fcy", sf_yield),
-        (material.Fty or 0.0, "Fty", sf_yield),
-        (material.Fsu or 0.0, "Fsu", sf_ult),
-        (fbu,                 "Fbu", sf_ult),
-    ]
-    combined_ms_rows = df_ms[df_ms["Check"].str.contains("Combined interaction", na=False)]
-    combined_ms = float(combined_ms_rows.iloc[0]["MS"]) if not combined_ms_rows.empty else None
-    stress_card_strip(govs, stress_allowables, combined_ms=combined_ms)
 
-    # ── 02 — Section Geometry & Key Points ───────────────────────────────
-    section_header("Section Geometry & Key Points", number="02",
-                   desc="KP positions and per-fiber stress state")
+    tab_geo, tab_load, tab_res, tab_marg, tab_form, tab_val = st.tabs(
+        ["Geometry", "Loads", "Results", "Margins", "Formulas", "Validation"])
 
-    col_left, col_right = st.columns([2, 1], gap="large")
+    # ═══════════════════════════ GEOMETRY ═══════════════════════════════
+    with tab_geo:
+        section_header("Section Geometry & Key Points", number="01",
+                       desc="section diagram, key points, and properties")
+        col_left, col_right = st.columns([2, 1], gap="large")
 
-    with col_left:
-        _tab_labels = ["Section Diagram", "Stress Contour"]
-        if solver_choice == "FEM":
-            _tab_labels.append("FEM Mesh")
-        _tabs = st.tabs(_tab_labels)
-        tab_sec, tab_con = _tabs[0], _tabs[1]
+        with col_left:
+            _glabels = ["Section Diagram"] + (
+                ["FEM Mesh"] if solver_choice == "FEM" else [])
+            _gtabs = st.tabs(_glabels)
+            with _gtabs[0]:
+                kps = section.key_points(loads.My, loads.Mz)
+                fig_sec = draw_section(section, kps)
+                st.pyplot(fig_sec, use_container_width=True)
+                plt.close(fig_sec)
+                rows = [(kp.id, kp.description, f"{kp.y:.4f}", f"{kp.z:.4f}")
+                        for kp in kps]
+                html_table(
+                    ["KP", "Description", "y (in)", "z (in)"], rows,
+                    col_aligns=["center", "left", "center", "center"],
+                )
+            if solver_choice == "FEM":
+                with _gtabs[1]:
+                    ms = fem_mesh_size_for(section, mesh_scale)
+                    with st.spinner("Meshing…"):
+                        fig_m = draw_fem_mesh(section, ms)
+                    st.pyplot(fig_m, use_container_width=True)
+                    plt.close(fig_m)
+                    jc, jf, pct = _cached_jconv(section_key, ms, section)
+                    flag = "✓" if pct < 2.0 else "⚠"
+                    st.caption(
+                        f"{flag} Coarse-vs-fine J sanity: J = {jc:.4f} in⁴ at "
+                        f"this mesh vs {jf:.4f} in⁴ at 4× finer → Δ = {pct:.1f}% "
+                        f"(mesh converged if small; refine if large)."
+                    )
 
-        with tab_sec:
-            kps = section.key_points(loads.My, loads.Mz)
-            fig_sec = draw_section(section, kps)
-            st.pyplot(fig_sec, use_container_width=True)
-            plt.close(fig_sec)
+        with col_right:
+            section_header("Section Properties")
+            iyz_val = section.Iyz()
+            for label, val, unit in [
+                ("A",   section.area(),      "in²"),
+                ("Iy",  section.Iy(),        "in⁴"),
+                ("Iz",  section.Iz(),        "in⁴"),
+                ("Iyz", iyz_val,             "in⁴"),
+                ("J",   section.J_torsion(), "in⁴"),
+                ("Sy",  section.Sy(),        "in³"),
+                ("Sz",  section.Sz(),        "in³"),
+                ("f",   section.effective_f_cozzone, "shape factor"),
+            ]:
+                info_card(label, f"{val:.2f}", unit)
+            if abs(iyz_val) > 1e-4:
+                na_angle = neutral_axis_angle_deg(section, loads)
+                if na_angle is not None:
+                    info_card("NA angle", f"{na_angle:.1f}", "deg",
+                              sub="neutral axis vs +Y (unsymmetric bending)")
+            if cozzone_gated:
+                st.caption(
+                    f"f = 1.0 (plastic bending gated pending crippling check — "
+                    f"table value {section.f_cozzone:.2f} not used)"
+                )
+            sc = shear_center(section)
+            if sc is not None:
+                info_card("SC", f"({sc[0]:.3f}, {sc[1]:.3f})", "in",
+                          sub="shear center (y, z) from centroid")
+                if abs(sc[0]) > 1e-3 or abs(sc[1]) > 1e-3:
+                    st.caption(
+                        "Transverse shear applied through the centroid induces "
+                        "torsion about the shear center — see §3.4 (Phase 3)."
+                    )
 
-            rows = [(kp.id, kp.description, f"{kp.y:.4f}", f"{kp.z:.4f}")
-                    for kp in kps]
-            html_table(
-                ["KP", "Description", "y (in)", "z (in)"],
-                rows,
-                col_aligns=["center", "left", "center", "center"],
+    # ═══════════════════════════ LOADS ═════════════════════════════════
+    with tab_load:
+        section_header("Applied Loads & Material", number="02",
+                       desc="load case (entered in the sidebar) and allowables")
+        col_a, col_b = st.columns(2, gap="large")
+        with col_a:
+            section_header("Applied Loads")
+            for label, val, unit in [
+                ("P", P, "lb"), ("Vy", Vy, "lb"), ("Vz", Vz, "lb"),
+                ("My", My, "lb·in"), ("Mz", Mz, "lb·in"),
+                ("T (total)", T, "lb·in"),
+            ]:
+                value_color = t.accent if val != 0 else t.muted
+                info_card(label, f"{val:,.1f}", unit, value_color=value_color)
+            if abs(T_induced) > 1e-9:
+                info_card("T induced", f"{T_induced:,.1f}", "lb·in",
+                          value_color=t.accent,
+                          sub="from shear off the shear center (§3.4)")
+        with col_b:
+            section_header("Material")
+            for prop, label, unit in [
+                ("Fty", "Fty", "ksi"), ("Ftu", "Ftu", "ksi"),
+                ("Fcy", "Fcy", "ksi"), ("Fsu", "Fsu", "ksi"),
+            ]:
+                val = getattr(material, prop)
+                val_str = f"{val:.1f}" if val is not None else "—"
+                info_card(
+                    label, val_str, unit,
+                    flag=estimated_flag(prop, material.estimated_fields),
+                )
+            if material.Ftu is not None:
+                info_card("Fbu", f"{fbu:.1f}", "ksi",
+                          sub=f"= f·Ftu  (f = {section.effective_f_cozzone:.2f})",
+                          flag="GATED" if cozzone_gated else None)
+            st.caption(material.source)
+
+    # ═══════════════════════════ RESULTS ═══════════════════════════════
+    with tab_res:
+        section_header("Governing Stress Summary", number="03",
+                       desc="extreme-fiber results across the section")
+        # Order tracks find_governing() (σ1, σ2, σ_vm, τ_total, σ_bend); each
+        # paired with the allowable its §3.6 check uses (σ1↔Ftu, σ2↔Fcy,
+        # σ_vm↔Fty, τ↔Fsu; σ_bend↔Fbu for display continuity only).
+        stress_allowables = [
+            (material.Ftu or 0.0, "Ftu", sf_ult),
+            (material.Fcy or 0.0, "Fcy", sf_yield),
+            (material.Fty or 0.0, "Fty", sf_yield),
+            (material.Fsu or 0.0, "Fsu", sf_ult),
+            (fbu,                 "Fbu", sf_ult),
+        ]
+        combined_ms_rows = df_ms[df_ms["Check"].str.contains(
+            "Combined interaction", na=False)]
+        combined_ms = (float(combined_ms_rows.iloc[0]["MS"])
+                       if not combined_ms_rows.empty else None)
+        stress_card_strip(govs, stress_allowables, combined_ms=combined_ms)
+
+        section_header("Stress Contour",
+                       desc="interactive FEM field — hover to probe")
+        if fem_available():
+            # Interactive Plotly view with a real 2-D FEM stress field (correct
+            # shear) and a hover probe (design handoff §6.2). Wrapped in a
+            # fragment so toggling an overlay or switching the displayed field
+            # reruns ONLY this block (hitting the cached field) — the rest of
+            # the page and the FEM solve don't re-fire.
+            from apps.beam_section.plotting_interactive import (
+                interactive_stress_contour, FIELD_LABELS,
             )
 
-        with tab_con:
-            if fem_available():
-                # Interactive Plotly view with a real 2-D FEM stress field
-                # (correct shear) and a hover probe (design handoff §6.2).
-                # Wrapped in a fragment so toggling an overlay or switching the
-                # displayed field reruns ONLY this block (and hits the cached
-                # field) — the rest of the page and the FEM solve don't re-fire.
-                from apps.beam_section.plotting_interactive import (
-                    interactive_stress_contour, FIELD_LABELS,
+            @st.fragment
+            def _contour_fragment():
+                field_label = st.radio(
+                    "Stress field", list(FIELD_LABELS.keys()),
+                    horizontal=True, key="contour_choice",
+                )
+                _oc = st.columns(5)
+                _ov = set()
+                if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
+                    _ov.add("centroid")
+                if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
+                    _ov.add("shear_center")
+                if _oc[2].checkbox("Neutral axis", value=True, key="ov_na"):
+                    _ov.add("neutral_axis")
+                if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
+                    _ov.add("shear_point")
+                _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
+                                             key="ov_mesh")
+                with st.spinner("Computing FEM stress field…"):
+                    field = _cached_stress_field(
+                        section_key, loads_key, mesh_scale, 160,
+                        section, loads)
+                fig_i = interactive_stress_contour(
+                    section, loads, material, sf_yield, sf_ult,
+                    field_label, mesh_scale=mesh_scale,
+                    shear_app=(y_app, z_app), overlays=_ov,
+                    show_mesh=_show_mesh, field=field)
+                st.plotly_chart(fig_i, use_container_width=True)
+                st.caption(
+                    "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
+                    "correct at every interior point (hover to probe). Peaks "
+                    "at sharp re-entrant corners are mesh-dependent (see "
+                    "warning)."
                 )
 
-                @st.fragment
-                def _contour_fragment():
-                    field_label = st.radio(
-                        "Stress field", list(FIELD_LABELS.keys()),
-                        horizontal=True, key="contour_choice",
-                    )
-                    _oc = st.columns(5)
-                    _ov = set()
-                    if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
-                        _ov.add("centroid")
-                    if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
-                        _ov.add("shear_center")
-                    if _oc[2].checkbox("Neutral axis", value=True, key="ov_na"):
-                        _ov.add("neutral_axis")
-                    if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
-                        _ov.add("shear_point")
-                    _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
-                                                 key="ov_mesh")
-                    with st.spinner("Computing FEM stress field…"):
-                        field = _cached_stress_field(
-                            section_key, loads_key, mesh_scale, 160,
-                            section, loads)
-                    fig_i = interactive_stress_contour(
-                        section, loads, material, sf_yield, sf_ult,
-                        field_label, mesh_scale=mesh_scale,
-                        shear_app=(y_app, z_app), overlays=_ov,
-                        show_mesh=_show_mesh, field=field)
-                    st.plotly_chart(fig_i, use_container_width=True)
-                    st.caption(
-                        "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
-                        "correct at every interior point (hover to probe). Peaks "
-                        "at sharp re-entrant corners are mesh-dependent (see "
-                        "warning)."
-                    )
+            _contour_fragment()
 
-                _contour_fragment()
-
-                with st.expander("Report figure (matplotlib, print-quality)"):
-                    rlabel = st.radio(
-                        "Field", ["σ_total", "σ_vm", "σ1", "σ2", "τ_total"],
-                        horizontal=True, key="report_field")
-                    fig_con = draw_contour(section, loads, rlabel)
-                    st.pyplot(fig_con, use_container_width=True)
-                    plt.close(fig_con)
-            else:
-                # FEM backend absent → matplotlib fallback (shear approximate).
-                _FIELD_KEYS = {"Max Principal (σ₁)": "σ1", "Min Principal (σ₂)": "σ2",
-                               "Axial + Bending (σ_total)": "σ_total",
-                               "Shear (τ_total)": "τ_total", "Equivalent (σ_vm)": "σ_vm"}
-                field_label = st.radio("Stress field", list(_FIELD_KEYS.keys()),
-                                       horizontal=True, key="contour_choice")
-                fig_con = draw_contour(section, loads, _FIELD_KEYS[field_label])
+            with st.expander("Report figure (matplotlib, print-quality)"):
+                rlabel = st.radio(
+                    "Field", ["σ_total", "σ_vm", "σ1", "σ2", "τ_total"],
+                    horizontal=True, key="report_field")
+                fig_con = draw_contour(section, loads, rlabel)
                 st.pyplot(fig_con, use_container_width=True)
                 plt.close(fig_con)
-                st.caption("Install the FEM backend (sectionproperties) for the "
-                           "interactive contour with a correct shear field.")
+        else:
+            # FEM backend absent → matplotlib fallback (shear approximate).
+            _FIELD_KEYS = {"Max Principal (σ₁)": "σ1", "Min Principal (σ₂)": "σ2",
+                           "Axial + Bending (σ_total)": "σ_total",
+                           "Shear (τ_total)": "τ_total", "Equivalent (σ_vm)": "σ_vm"}
+            field_label = st.radio("Stress field", list(_FIELD_KEYS.keys()),
+                                   horizontal=True, key="contour_choice")
+            fig_con = draw_contour(section, loads, _FIELD_KEYS[field_label])
+            st.pyplot(fig_con, use_container_width=True)
+            plt.close(fig_con)
+            st.caption("Install the FEM backend (sectionproperties) for the "
+                       "interactive contour with a correct shear field.")
 
-        if solver_choice == "FEM":
-            with _tabs[2]:
-                ms = fem_mesh_size_for(section, mesh_scale)
-                with st.spinner("Meshing…"):
-                    fig_m = draw_fem_mesh(section, ms)
-                st.pyplot(fig_m, use_container_width=True)
-                plt.close(fig_m)
-                jc, jf, pct = _cached_jconv(section_key, ms, section)
-                flag = "✓" if pct < 2.0 else "⚠"
-                st.caption(
-                    f"{flag} Coarse-vs-fine J sanity: J = {jc:.4f} in⁴ at this "
-                    f"mesh vs {jf:.4f} in⁴ at 4× finer → Δ = {pct:.1f}% "
-                    f"(mesh converged if small; refine if large)."
-                )
+        section_header("Stress Results at Key Points",
+                       desc="all stresses in ksi")
 
-    with col_right:
-        section_header("Material")
-        for prop, label, unit in [
-            ("Fty", "Fty", "ksi"), ("Ftu", "Ftu", "ksi"),
-            ("Fcy", "Fcy", "ksi"), ("Fsu", "Fsu", "ksi"),
-        ]:
-            val = getattr(material, prop)
-            val_str = f"{val:.1f}" if val is not None else "—"
-            info_card(
-                label, val_str, unit,
-                flag=estimated_flag(prop, material.estimated_fields),
-            )
-        if material.Ftu is not None:
-            info_card("Fbu", f"{fbu:.1f}", "ksi",
-                      sub=f"= f·Ftu  (f = {section.effective_f_cozzone:.2f})",
-                      flag="GATED" if cozzone_gated else None)
-        st.caption(material.source)
+        num_cols = ["σ_axial", "σ_bend", "σ_total",
+                    "τ_Vy", "τ_Vz", "τ_T", "τ_total",
+                    "σ1", "σ2", "σ_vm"]
 
-        section_header("Applied Loads")
-        for label, val, unit in [
-            ("P", P, "lb"), ("Vy", Vy, "lb"), ("Vz", Vz, "lb"),
-            ("My", My, "lb·in"), ("Mz", Mz, "lb·in"),
-            ("T (total)", T, "lb·in"),
-        ]:
-            value_color = t.accent if val != 0 else t.muted
-            info_card(label, f"{val:,.1f}", unit, value_color=value_color)
-        if abs(T_induced) > 1e-9:
-            info_card("T induced", f"{T_induced:,.1f}", "lb·in",
-                      value_color=t.accent,
-                      sub="from shear off the shear center (§3.4)")
+        # Find ALL rows that share the maximum absolute value per column.
+        # Ties due to symmetry are highlighted together, not just the first.
+        gov_max  = {c: df_stress[c].abs().max() for c in num_cols}
+        gov_mask = {c: df_stress[c].abs() >= gov_max[c] - 1e-9 for c in num_cols}
 
-        section_header("Section Properties")
-        iyz_val = section.Iyz()
-        for label, val, unit in [
-            ("A",   section.area(),      "in²"),
-            ("Iy",  section.Iy(),        "in⁴"),
-            ("Iz",  section.Iz(),        "in⁴"),
-            ("Iyz", iyz_val,             "in⁴"),
-            ("J",   section.J_torsion(), "in⁴"),
-            ("Sy",  section.Sy(),        "in³"),
-            ("Sz",  section.Sz(),        "in³"),
-            ("f",   section.effective_f_cozzone, "shape factor"),
-        ]:
-            info_card(label, f"{val:.2f}", unit)
-        if abs(iyz_val) > 1e-4:
-            na_angle = neutral_axis_angle_deg(section, loads)
-            if na_angle is not None:
-                info_card("NA angle", f"{na_angle:.1f}", "deg",
-                          sub="neutral axis vs +Y (unsymmetric bending)")
-        if cozzone_gated:
-            st.caption(
-                f"f = 1.0 (plastic bending gated pending crippling check — "
-                f"table value {section.f_cozzone:.2f} not used)"
-            )
+        def _kp_label(c: str) -> str:
+            if gov_max[c] < 1e-9:
+                return "---"
+            if gov_mask[c].all():
+                return "ALL"
+            return ", ".join(df_stress.loc[gov_mask[c], "KP"].tolist())
 
-        sc = shear_center(section)
-        if sc is not None:
-            info_card("SC", f"({sc[0]:.3f}, {sc[1]:.3f})", "in",
-                      sub="shear center (y, z) from centroid")
-            if abs(sc[0]) > 1e-3 or abs(sc[1]) > 1e-3:
-                st.caption(
-                    "Transverse shear applied through the centroid induces "
-                    "torsion about the shear center — see §3.4 (Phase 3)."
-                )
+        gov_kps  = {c: _kp_label(c) for c in num_cols}
+        gov_vals = {c: df_stress.loc[gov_mask[c], c].iloc[0] for c in num_cols}
 
-    # ── 03 — Stress Results ───────────────────────────────────────────────
-    section_header("Stress Results at Key Points", number="03",
-                   desc="all stresses in ksi")
+        hdrs = ["KP", "Description"] + num_cols
+        rows_html: list[list[str]] = []
+        for i, row in df_stress.iterrows():
+            cells = [row["KP"], row["Description"]]
+            for c in num_cols:
+                v = row[c]
+                if gov_mask[c].loc[i]:
+                    cell = (
+                        f"<span style='background:{t.amber_bg};"
+                        f"color:{t.amber};font-weight:700;"
+                        f"padding:1px 4px;border-radius:3px;'>"
+                        f"{v:.2f}</span>"
+                    )
+                else:
+                    cell = f"{v:.2f}"
+                cells.append(cell)
+            rows_html.append(cells)
 
-    num_cols = ["σ_axial", "σ_bend", "σ_total",
-                "τ_Vy", "τ_Vz", "τ_T", "τ_total",
-                "σ1", "σ2", "σ_vm"]
-
-    # Find ALL rows that share the maximum absolute value for each column.
-    # Ties due to symmetry are highlighted together rather than just the first.
-    gov_max  = {c: df_stress[c].abs().max() for c in num_cols}
-    gov_mask = {c: df_stress[c].abs() >= gov_max[c] - 1e-9 for c in num_cols}
-    def _kp_label(c: str) -> str:
-        # gov_max uses abs(), so this correctly catches zero for all columns
-        # including σ2 which can be negative.
-        if gov_max[c] < 1e-9:
-            return "---"
-        if gov_mask[c].all():
-            return "ALL"
-        return ", ".join(df_stress.loc[gov_mask[c], "KP"].tolist())
-
-    gov_kps  = {c: _kp_label(c) for c in num_cols}
-    gov_vals = {c: df_stress.loc[gov_mask[c], c].iloc[0] for c in num_cols}
-
-    hdrs = ["KP", "Description"] + num_cols
-    rows_html: list[list[str]] = []
-    for i, row in df_stress.iterrows():
-        cells = [row["KP"], row["Description"]]
+        gov_row: list[str] = ["↑ max |val|", "—"]
         for c in num_cols:
-            v = row[c]
-            if gov_mask[c].loc[i]:
-                cell = (
-                    f"<span style='background:{t.amber_bg};"
-                    f"color:{t.amber};font-weight:700;"
-                    f"padding:1px 4px;border-radius:3px;'>"
-                    f"{v:.2f}</span>"
-                )
-            else:
-                cell = f"{v:.2f}"
-            cells.append(cell)
-        rows_html.append(cells)
+            v = gov_vals[c]
+            gov_row.append(
+                f"<span style='color:{t.accent};font-size:10px;font-weight:700;'>"
+                f"{gov_kps[c]}<br>{v:.2f}</span>"
+            )
+        rows_html.append(gov_row)
 
-    # Bottom row: all tied governing KPs + their value
-    gov_row: list[str] = ["↑ max |val|", "—"]
-    for c in num_cols:
-        v = gov_vals[c]
-        gov_row.append(
-            f"<span style='color:{t.accent};font-size:10px;font-weight:700;'>"
-            f"{gov_kps[c]}<br>{v:.2f}</span>"
+        html_table(
+            hdrs, rows_html,
+            col_aligns=["center", "left"] + ["center"] * len(num_cols),
         )
-    rows_html.append(gov_row)
+        st.caption(
+            "Amber = governing (max-absolute) value per column. "
+            "Bottom row: governing KP and value."
+        )
 
-    html_table(
-        hdrs, rows_html,
-        col_aligns=["center", "left"] + ["center"] * len(num_cols),
-    )
-    st.caption(
-        "Amber = governing (max-absolute) value per column. "
-        "Bottom row: governing KP and value."
-    )
+    # ═══════════════════════════ MARGINS ═══════════════════════════════
+    with tab_marg:
+        section_header("Margin of Safety", number="04",
+                       desc="MS = Allow / (SF × Applied) − 1")
 
-    # ── 04 — Margin of Safety ─────────────────────────────────────────────
-    section_header("Margin of Safety", number="04",
-                   desc="MS = Allow / (SF × Applied) − 1")
+        all_ms  = [float(v) for v in df_ms["MS"]
+                   if isinstance(v, (int, float)) and v < 999]
+        min_ms  = min(all_ms) if all_ms else 999.0
 
-    all_ms  = [float(v) for v in df_ms["MS"]
-               if isinstance(v, (int, float)) and v < 999]
-    min_ms  = min(all_ms) if all_ms else 999.0
+        if min_ms >= 0:
+            st.success(f"✓  ALL MARGINS POSITIVE  |  Minimum MS = {min_ms:.3f}")
+        else:
+            st.error(f"✗  NEGATIVE MARGIN DETECTED  |  Minimum MS = {min_ms:.3f}")
 
-    if min_ms >= 0:
-        st.success(f"✓  ALL MARGINS POSITIVE  |  Minimum MS = {min_ms:.3f}")
-    else:
-        st.error(f"✗  NEGATIVE MARGIN DETECTED  |  Minimum MS = {min_ms:.3f}")
+        ms_rows: list[list[str]] = []
+        for _, row in df_ms.iterrows():
+            allow = row["Allow"]
+            allow_str = (f"{allow:.1f}" if isinstance(allow, (int, float))
+                         else str(allow))
+            applied = row["Applied"]
+            applied_str = (f"{float(applied):.2f}"
+                           if isinstance(applied, (int, float)) else str(applied))
+            ms_rows.append([
+                row["Check"], allow_str, f"{row['SF']:.2f}", applied_str,
+                ms_chip(row["MS"]),
+            ])
 
-    ms_rows: list[list[str]] = []
-    for _, row in df_ms.iterrows():
-        allow = row["Allow"]
-        allow_str = f"{allow:.1f}" if isinstance(allow, (int, float)) else str(allow)
+        html_table(
+            ["Check", "Allowable (ksi)", "SF", "Applied (ksi)", "MS"],
+            ms_rows,
+            col_aligns=["left", "center", "center", "center", "center"],
+        )
+        st.caption(
+            "+HIGH indicates MS > 10 — substantial reserve; exact value not shown."
+        )
 
-        applied = row["Applied"]
-        applied_str = (f"{float(applied):.2f}"
-                       if isinstance(applied, (int, float)) else str(applied))
-
-        ms_rows.append([
-            row["Check"],
-            allow_str,
-            f"{row['SF']:.2f}",
-            applied_str,
-            ms_chip(row["MS"]),
-        ])
-
-    html_table(
-        ["Check", "Allowable (ksi)", "SF", "Applied (ksi)", "MS"],
-        ms_rows,
-        col_aligns=["left", "center", "center", "center", "center"],
-    )
-    st.caption(
-        "+HIGH indicates MS > 10 — substantial reserve; exact value not shown."
-    )
-
-    # ── 05 — Formulae Reference ───────────────────────────────────────────
-    with st.expander("First-Principles Formulae Reference", expanded=False):
+    # ═══════════════════════════ FORMULAS ══════════════════════════════
+    with tab_form:
+        section_header("First-Principles Formulae", number="05",
+                       desc=f"equations applicable to {shape_name}")
         st.markdown(
             f"<p style='font-size:11px;color:{t.muted};margin-bottom:10px;'>"
-            f"Showing formulae applicable to <b>{shape_name}</b>. "
             "Ref: MMPDS-01 §1.3, Roark's Formulas for Stress &amp; Strain, "
             "Timoshenko &amp; Goodier Theory of Elasticity. "
             "Bending uses the full unsymmetric-bending tensor — valid for "
@@ -843,6 +905,10 @@ def render() -> None:
             if shapes is None or shape_name in shapes
         ]
         render_formulae(applicable_formulae)
+
+    # ═══════════════════════════ VALIDATION ════════════════════════════
+    with tab_val:
+        _render_validation(section, mesh_scale)
 
     # ── Footer ────────────────────────────────────────────────────────────
     st.divider()

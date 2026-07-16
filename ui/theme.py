@@ -88,6 +88,25 @@ THEME = Theme(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Margin-of-safety color thresholds (design handoff §6.3)
+# MS < MS_FAIL → fail (red); MS_FAIL ≤ MS < MS_WARN → caution (amber);
+# MS ≥ MS_WARN → pass (green). Kept here as constants — never inline in pages.
+# ──────────────────────────────────────────────────────────────────────────
+MS_FAIL = 0.0
+MS_WARN = 0.25
+
+
+def ms_status(ms: float) -> tuple[str, str, str]:
+    """Map an MS value to (background, foreground, label) using THEME status
+    colors and the MS_FAIL / MS_WARN thresholds above."""
+    if ms < MS_FAIL:
+        return THEME.fail_bg, THEME.fail_fg, "FAIL"
+    if ms < MS_WARN:
+        return THEME.warn_bg, THEME.warn_fg, "MARGINAL"
+    return THEME.pass_bg, THEME.pass_fg, "PASS"
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Engineering plot palette — used by matplotlib figures.
 # Always white background for print-friendly output.
 # ──────────────────────────────────────────────────────────────────────────

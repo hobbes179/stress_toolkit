@@ -36,6 +36,31 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6C — Tabbed layout + governing banner (§6.3)
+
+Presentation only; no results change. The single long scrolling page was
+reorganized into six tabs — **Geometry | Loads | Results | Margins |
+Formulas | Validation** — with a persistent governing banner above them.
+
+- **Governing banner** (`ui.components.governing_banner`): a 4-cell metric
+  row — min MS (color-chipped), governing check, its location (the KP where
+  that check's stress column peaks), and the solver used. Colors come from
+  new **`ui.theme` thresholds** `MS_FAIL = 0.0`, `MS_WARN = 0.25` via
+  `ms_status()` (never inline, per the handoff).
+- **`governing_summary(df_stress, df_ms)`** (pure, in calculations.py):
+  reduces the margin table to `(min_ms, check_name, location)`; the
+  combined-interaction row is reported as section-wide. Unit-tested.
+- **Tab mapping**: Geometry = section diagram + key points + properties (+ FEM
+  mesh subtab); Loads = applied loads + material allowables; Results =
+  governing summary cards + interactive contour (the 6B fragment, relocated
+  intact) + per-KP stress table; Margins = MS table; Formulas = the reference
+  (promoted out of an expander); Validation = a lightweight FEM-vs-closed-form
+  section-property cross-check (A/Iy/Iz/J with %Δ chips) previewing the full
+  Phase 7 validation page.
+
+Both render paths (FEM and the no-FEM matplotlib fallback) verified end-to-end
+via `streamlit.testing.v1.AppTest`.
+
 ### 6B — Performance: caching + result fragment
 
 No results change; interaction latency only. Streamlit reruns the whole

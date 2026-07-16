@@ -16,7 +16,9 @@ pytest.importorskip("sectionproperties")
 pytest.importorskip("plotly")
 
 from library.shapes import make_section
-from apps.beam_section.calculations import Loads, calc_stress_at_points
+from apps.beam_section.calculations import (
+    Loads, calc_stress_at_points, calc_margin_table, governing_summary,
+)
 from apps.beam_section.plotting_interactive import (
     interactive_stress_contour, compute_stress_field, FIELD_LABELS,
 )
@@ -149,3 +151,32 @@ def test_precomputed_field_matches_fresh_solve():
     # NaN pattern identical, finite values identical.
     assert np.array_equal(np.isnan(a), np.isnan(b))
     np.testing.assert_allclose(np.nan_to_num(a), np.nan_to_num(b), rtol=1e-9)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Phase 6C: governing-banner reduction (min MS + governing check + location)
+# ──────────────────────────────────────────────────────────────────────────
+def test_governing_summary_reports_min_ms_check_and_location():
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    loads = Loads(Vz=3000, My=15000, T=400)
+    df = calc_stress_at_points(sec, loads, solver="Classical")
+    df_ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, loads)
+    min_ms, check, loc = governing_summary(df, df_ms)
+
+    # min_ms must equal the smallest numeric MS in the table.
+    numeric = [float(v) for v in df_ms["MS"]
+               if isinstance(v, (int, float)) and v < 999]
+    assert min_ms == pytest.approx(min(numeric))
+    # the reported check is the row that owns that MS.
+    owner = df_ms.loc[df_ms["MS"] == min_ms, "Check"].iloc[0]
+    assert check == owner
+    # location is a real KP coordinate string, or the section-wide label.
+    assert "(" in loc or "section" in loc
+
+
+def test_governing_summary_handles_all_infinite_margins():
+    sec = make_section("Rectangle", [2, 3, None, None])
+    df = calc_stress_at_points(sec, Loads(), solver="Classical")  # no load
+    df_ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, Loads())
+    min_ms, check, loc = governing_summary(df, df_ms)
+    assert min_ms == 999.0 and check == "—" and loc == "—"

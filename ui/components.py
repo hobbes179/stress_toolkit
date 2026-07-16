@@ -25,7 +25,53 @@ from typing import Iterable, Sequence
 
 import streamlit as st
 
-from ui.theme import THEME
+from ui.theme import THEME, ms_status
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Governing banner (persistent metric row above the tabs — handoff §6.3)
+# ──────────────────────────────────────────────────────────────────────────
+def governing_banner(
+    min_ms: float,
+    check_name: str,
+    location: str,
+    solver_name: str,
+) -> None:
+    """
+    Render the persistent governing-result banner: a 4-cell metric row with
+    min MS (color-chipped by ms_status), the governing check, its location,
+    and the solver used. Colors come from ui.theme thresholds, never inline.
+    """
+    t = THEME
+    bg, fg, label = ms_status(min_ms)
+    ms_str = "+∞" if min_ms > 99 else f"{min_ms:+.3f}"
+
+    def _cell(lbl: str, val: str, *, big_bg: str | None = None,
+              big_fg: str | None = None, sub: str | None = None) -> str:
+        cell_bg = big_bg or t.bg3
+        val_fg  = big_fg or t.text
+        sub_html = (f"<div style='font-size:10px;color:{val_fg};opacity:0.85;"
+                    f"margin-top:2px;'>{sub}</div>") if sub else ""
+        return (
+            f"<div style='flex:1;min-width:120px;background:{cell_bg};"
+            f"border:1px solid {t.border};border-radius:6px;padding:9px 12px;'>"
+            f"<div style='font-size:10px;font-weight:700;letter-spacing:0.04em;"
+            f"color:{t.muted};font-family:\"IBM Plex Mono\",monospace;'>{lbl}</div>"
+            f"<div style='font-size:16px;font-weight:700;color:{val_fg};"
+            f"margin-top:2px;line-height:1.2;'>{val}</div>{sub_html}</div>"
+        )
+
+    cells = (
+        _cell("MIN MARGIN", f"MS = {ms_str}", big_bg=bg, big_fg=fg, sub=label)
+        + _cell("GOVERNING CHECK", check_name)
+        + _cell("LOCATION", location)
+        + _cell("SOLVER", solver_name)
+    )
+    st.markdown(
+        f"<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;'>"
+        f"{cells}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────

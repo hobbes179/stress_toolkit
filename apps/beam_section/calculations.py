@@ -472,6 +472,37 @@ class GoverningStress:
     unit:        str    # "ksi"
 
 
+# Maps each single-stress margin check to the stress column whose governing
+# key point locates it (the combined-interaction row is section-wide).
+_CHECK_COLUMN = {
+    "σ_vm vs Fty (yield)":              "σ_vm",
+    "σ₁ vs Ftu (ultimate)":            "σ1",
+    "|σ₂| vs Fcy (compression yield)": "σ2",
+    "τ_wall vs Fsu (shear ultimate)":  "τ_total",
+}
+
+
+def governing_summary(df_stress: pd.DataFrame, df_ms: pd.DataFrame):
+    """
+    Reduce the margin table to the banner triple (min_ms, check_name,
+    location_label). The location is the key point where the governing
+    check's stress column peaks; the combined-interaction check is
+    section-wide and reports no single point.
+    """
+    numeric = [(i, float(r["MS"])) for i, r in df_ms.iterrows()
+               if isinstance(r["MS"], (int, float)) and r["MS"] < 999]
+    if not numeric:
+        return 999.0, "—", "—"
+    idx, min_ms = min(numeric, key=lambda t: t[1])
+    check = str(df_ms.loc[idx, "Check"])
+    col = _CHECK_COLUMN.get(check)
+    if col is None:                       # combined interaction — section-wide
+        return min_ms, check, "section (combined)"
+    gidx = df_stress[col].idxmin() if col == "σ2" else df_stress[col].idxmax()
+    row = df_stress.loc[gidx]
+    return min_ms, check, f"{row['KP']} ({row['y']:.2f}, {row['z']:.2f})"
+
+
 def find_governing(df_stress: pd.DataFrame) -> list[GoverningStress]:
     """Return one GoverningStress for each of the key stress types."""
     items = [
