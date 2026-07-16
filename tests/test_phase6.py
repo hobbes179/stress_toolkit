@@ -220,3 +220,42 @@ def test_df_to_markdown_roundtrips_shape_and_values():
     assert lines[1] == "| --- | --- |"
     assert lines[2] == "| σ_vm vs Fty | +0.120 |"
     assert len(lines) == 4                       # header + rule + 2 rows
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Phase 6D: principal-axis angle + contour overlays + dimension leaders
+# ──────────────────────────────────────────────────────────────────────────
+def test_principal_axis_angle_symmetric_vs_unsymmetric():
+    from apps.beam_section.calculations import principal_axis_angle_deg
+    # Doubly-symmetric I-beam: principal axes = geometric Y/Z ⇒ 0°.
+    assert principal_axis_angle_deg(
+        make_section("I-Beam / W-Shape", [4, 6, 0.375, 0.25])) == pytest.approx(0.0)
+    # Equal-leg angle: principal axes at ±45° by diagonal symmetry.
+    ang = principal_axis_angle_deg(make_section("L-Beam / Angle", [3, 3, 0.25, 0.25]))
+    assert abs(ang) == pytest.approx(45.0, abs=1.0)
+
+
+def test_contour_principal_axes_and_load_arrow_overlays():
+    sec = make_section("L-Beam / Angle", [3, 3, 0.25, 0.25])
+    loads = Loads(Vy=300, Vz=500, T=200)
+    fig = interactive_stress_contour(
+        sec, loads, _MAT, 1.0, 1.5, "σ_vm (von Mises)",
+        shear_app=(0.2, 0.1),
+        overlays={"principal_axes", "load_arrows"})
+    names = {tr.name for tr in fig.data if tr.name}
+    assert {"principal 1", "principal 2"} <= names
+    ann = [a.text for a in fig.layout.annotations]
+    assert "V_y" in ann and "V_z" in ann          # shear-direction arrows
+    assert any("T" in a for a in ann)             # torsion spin glyph
+
+
+def test_dimension_annotations_match_bounding_box():
+    import numpy as np
+    sec = make_section("Rectangle", [2.0, 3.0, None, None])  # b=2, h=3
+    ann = sec.dimension_annotations()
+    assert len(ann) >= 2
+    allpts = np.concatenate(sec.polygon_vertices())
+    W = np.ptp(allpts[:, 0])
+    H = np.ptp(allpts[:, 1])
+    labels = {a[2] for a in ann}
+    assert f"{W:.3g}" in labels and f"{H:.3g}" in labels

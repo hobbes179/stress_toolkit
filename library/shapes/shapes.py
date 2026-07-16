@@ -174,6 +174,31 @@ class Section:
         zs = np.concatenate([p[:, 1] for p in pts])
         return float(max(abs(zs.min()), abs(zs.max())))
 
+    def dimension_annotations(self) -> list:
+        """
+        Dimension-leader specs for the section diagram (design handoff §6.3):
+        a list of (p1, p2, label) tuples where the segment p1→p2 is a
+        dimension line drawn just outside the section and `label` is its
+        measured value. Coordinates are (y, z) from the centroid.
+
+        The base implementation returns the OVERALL bounding-box width and
+        height — correct for every shape, so the user can visually confirm the
+        overall size. Specific shapes may override to also call out member
+        dimensions (b, h, tf, tw).
+        """
+        pts = self.polygon_vertices()
+        if not pts:
+            return []
+        allpts = np.concatenate(pts)
+        ymin, ymax = float(allpts[:, 0].min()), float(allpts[:, 0].max())
+        zmin, zmax = float(allpts[:, 1].min()), float(allpts[:, 1].max())
+        W, H = ymax - ymin, zmax - zmin
+        g = max(W, H, 1e-6) * 0.14
+        return [
+            ((ymin, zmin - g), (ymax, zmin - g), f"{W:.3g}"),   # overall width
+            ((ymin - g, zmin), (ymin - g, zmax), f"{H:.3g}"),   # overall height
+        ]
+
     def Sy(self) -> float:
         """Section modulus about Y."""
         cz = self.cz()

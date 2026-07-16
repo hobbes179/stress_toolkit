@@ -20,7 +20,7 @@ import numpy as np
 
 from library.materials import Material
 from apps.beam_section.calculations import (
-    Loads, neutral_axis_angle_deg, shear_center,
+    Loads, neutral_axis_angle_deg, principal_axis_angle_deg, shear_center,
 )
 
 
@@ -246,6 +246,44 @@ def interactive_stress_contour(
             marker=dict(symbol="diamond", size=11, color="#ffd60a",
                         line=dict(color="black", width=1)),
             name="shear applied", hoverinfo="name"))
+    if "principal_axes" in overlays:
+        # Two perpendicular principal centroidal axes (cyan). Coincide with
+        # Y/Z for symmetric sections; rotated for L/Z (Iyz ≠ 0).
+        pa = np.radians(principal_axis_angle_deg(section))
+        L = max(cy, cz) * 1.25
+        for off, nm in [(0.0, "principal 1"), (np.pi / 2, "principal 2")]:
+            a = pa + off
+            fig.add_trace(go.Scatter(
+                x=[-L * np.cos(a), L * np.cos(a)],
+                y=[-L * np.sin(a), L * np.sin(a)],
+                mode="lines", line=dict(color="#00d5ff", width=1.1, dash="dashdot"),
+                name=nm, hoverinfo="name"))
+    if "load_arrows" in overlays:
+        # In-plane load-direction arrows from the shear-application point
+        # (or centroid): transverse shears Vy/Vz, plus a torsion spin glyph.
+        ya, za = shear_app if shear_app is not None else (0.0, 0.0)
+        Larr = max(cy, cz) * 0.55
+        red = "#ff1744"
+
+        def _arrow(dx, dy, label):
+            fig.add_annotation(
+                x=ya + dx, y=za + dy, ax=ya, ay=za,
+                xref="x", yref="y", axref="x", ayref="y",
+                showarrow=True, arrowhead=3, arrowsize=1.3, arrowwidth=2.2,
+                arrowcolor=red, text=label, font=dict(color=red, size=11),
+                standoff=1,
+            )
+
+        if abs(loads.Vy) > 1e-9:
+            _arrow(np.sign(loads.Vy) * Larr, 0.0, "V_y")
+        if abs(loads.Vz) > 1e-9:
+            _arrow(0.0, np.sign(loads.Vz) * Larr, "V_z")
+        if abs(loads.T) > 1e-9:
+            # ↺ = +T (CCW about +X out of page), ↻ = −T.
+            spin = "↺ T" if loads.T > 0 else "↻ T"
+            fig.add_annotation(x=cy * 0.72, y=cz * 0.72, text=spin,
+                               showarrow=False,
+                               font=dict(color=red, size=16))
 
     pad = max(cy, cz) * 0.12
     fig.update_xaxes(title="y (in)", range=[-cy - pad, cy + pad],

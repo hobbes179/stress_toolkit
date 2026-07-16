@@ -339,6 +339,16 @@ for A36, A572, and 300M.
     cross-check view. See CHANGELOG "6C.2 — Clarify: the contour is always an
     FEM field."
 
+10b. **Per-member dimension leaders** (wish list, 2026-07-16)
+    `Section.dimension_annotations()` (added in Phase 6D) currently returns
+    only the overall bounding-box width and height, drawn as dimension leader
+    lines on the section diagram. Wish: override it per shape to also call out
+    the individual member dimensions the engineer inputs — flange width bf,
+    depth d, flange thickness tf, web thickness tw, etc. — each as its own
+    labeled leader line, so the diagram becomes a full dimensioned drawing that
+    confirms every input. Mechanical but touches all 11 catalog shapes; the
+    hook and the base default are already in place.
+
 ### Long-term (new modules)
 
 Each new module follows the same pattern:

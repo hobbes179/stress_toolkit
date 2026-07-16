@@ -63,9 +63,28 @@ def _point_in_section(y: float, z: float, polys: list[np.ndarray]) -> bool:
 # ──────────────────────────────────────────────────────────────────────────
 # Section diagram (proportional, key points labelled)
 # ──────────────────────────────────────────────────────────────────────────
-def draw_section(section: Section, kps: Sequence[KeyPoint]):
+def _draw_dim_line(ax, p1, p2, label: str, P: dict) -> None:
+    """Draw one dimension leader: a double-headed line p1→p2 with a centered
+    value label (horizontal dims label below the line, vertical dims rotated)."""
+    (y1, z1), (y2, z2) = p1, p2
+    ax.annotate("", xy=(y2, z2), xytext=(y1, z1),
+                arrowprops=dict(arrowstyle="<|-|>", color=P["tick"],
+                                lw=0.9, shrinkA=0, shrinkB=0), zorder=9)
+    horiz = abs(y2 - y1) >= abs(z2 - z1)
+    ax.annotate(label, xy=((y1 + y2) / 2, (z1 + z2) / 2),
+                xytext=(0, -9) if horiz else (-9, 0), textcoords="offset points",
+                ha="center", va="center", fontsize=7, color=P["text"],
+                rotation=0 if horiz else 90,
+                bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none",
+                          alpha=0.85), zorder=10)
+
+
+def draw_section(section: Section, kps: Sequence[KeyPoint], *,
+                 show_dims: bool = True):
     """
-    Draw the section outline with key points labelled. Returns the figure.
+    Draw the section outline with key points labelled. When `show_dims`, the
+    shape's dimension_annotations() are drawn as dimension leader lines so the
+    user can visually confirm the geometry. Returns the figure.
     """
     P = PLOT_PALETTE
     fig, ax = plt.subplots(figsize=(6, 6), facecolor=P["background"])
@@ -129,6 +148,11 @@ def draw_section(section: Section, kps: Sequence[KeyPoint]):
             bbox=dict(boxstyle="circle,pad=0.15",
                       fc="white", ec=P["kp_marker"], lw=0.8),
         )
+
+    # Dimension leader lines (design handoff §6.3) — drawn outside the section.
+    if show_dims:
+        for p1, p2, label in section.dimension_annotations():
+            _draw_dim_line(ax, p1, p2, label, P)
 
     pad = max(cy, cz) * 0.45
     ax.set_xlim(-cy - pad, cy + pad * 1.4)

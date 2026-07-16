@@ -610,8 +610,10 @@ def render() -> None:
                 ["FEM Mesh"] if solver_choice == "FEM" else [])
             _gtabs = st.tabs(_glabels)
             with _gtabs[0]:
+                _show_dims = st.checkbox("Dimension leaders", value=True,
+                                         key="geo_dims")
                 kps = section.key_points(loads.My, loads.Mz)
-                fig_sec = draw_section(section, kps)
+                fig_sec = draw_section(section, kps, show_dims=_show_dims)
                 st.pyplot(fig_sec, use_container_width=True)
                 plt.close(fig_sec)
                 rows = [(kp.id, kp.description, f"{kp.y:.4f}", f"{kp.z:.4f}")
@@ -763,8 +765,8 @@ def render() -> None:
                     "Stress field", list(FIELD_LABELS.keys()),
                     horizontal=True, key="contour_choice",
                 )
-                _oc = st.columns(5)
                 _ov = set()
+                _oc = st.columns(4)
                 if _oc[0].checkbox("Centroid", value=True, key="ov_centroid"):
                     _ov.add("centroid")
                 if _oc[1].checkbox("Shear center", value=True, key="ov_sc"):
@@ -773,8 +775,13 @@ def render() -> None:
                     _ov.add("neutral_axis")
                 if _oc[3].checkbox("Shear point", value=True, key="ov_shearpt"):
                     _ov.add("shear_point")
-                _show_mesh = _oc[4].checkbox("Mesh lines", value=False,
-                                             key="ov_mesh")
+                _oc2 = st.columns(4)
+                if _oc2[0].checkbox("Principal axes", value=False, key="ov_pa"):
+                    _ov.add("principal_axes")
+                if _oc2[1].checkbox("Load arrows", value=False, key="ov_load"):
+                    _ov.add("load_arrows")
+                _show_mesh = _oc2[2].checkbox("Mesh lines", value=False,
+                                              key="ov_mesh")
                 with st.spinner("Computing FEM stress field…"):
                     field = _cached_stress_field(
                         section_key, loads_key, mesh_scale, 160,

@@ -559,3 +559,20 @@ def neutral_axis_angle_deg(section: Section, loads: Loads) -> float | None:
         return None
     # Line c_z·z + c_y·y = 0 → direction (dy, dz) ∝ (c_z, −c_y).
     return math.degrees(math.atan2(-c_y, c_z))
+
+
+def principal_axis_angle_deg(section: Section) -> float:
+    """
+    Angle (degrees, from the +Y axis) of one principal centroidal axis of the
+    section's area-inertia tensor; the second principal axis is +90° from it.
+
+    Geometry-only (load-independent). Returns 0 for sections whose principal
+    axes already coincide with the geometric Y/Z axes (any section with
+    Iyz ≈ 0, including all doubly/singly-symmetric shapes). A nonzero value
+    is the signature of an unsymmetric section (L, Z) — for the Phase 6 plot
+    overlay. From Mohr's circle for area moments: 2θ_p = atan2(2·Iyz, Iy−Iz).
+    """
+    Iy, Iz, Iyz = section.Iy(), section.Iz(), section.Iyz()
+    if abs(Iyz) < 1e-12:
+        return 0.0
+    return 0.5 * math.degrees(math.atan2(2.0 * Iyz, Iy - Iz))

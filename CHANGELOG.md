@@ -36,6 +36,28 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6D — Contour overlays + annotated geometry (§6.3)
+
+Presentation only. Two additions:
+
+- **Contour overlays** (new toggles in the Results contour): **principal axes**
+  (two perpendicular cyan dash-dot lines through the centroid at the section's
+  principal-inertia angle — coincide with Y/Z for symmetric shapes, rotated
+  for L/Z) and **load-direction arrows** (red Vy/Vz vectors from the
+  shear-application point + a ↺/↻ torsion spin glyph for the sign of T). New
+  pure helper `principal_axis_angle_deg(section)` (Mohr's circle,
+  2θ = atan2(2·Iyz, Iy−Iz); 0 when Iyz≈0). Both default off to avoid clutter.
+- **Dimension leaders on the section diagram** (Geometry tab, toggle "Dimension
+  leaders", default on): a new `Section.dimension_annotations()` returns
+  `(p1, p2, label)` leader specs; the base implementation draws the overall
+  bounding-box width and height for every shape, so the user can confirm the
+  size before trusting results. Drawn as double-headed dimension lines by
+  `draw_section`.
+
+Note: the base dimension leaders show overall W×H only. Per-member callouts
+(tf, tw, individual flange/web dims) are a future refinement — see CLAUDE.md
+Planned future work item 10b.
+
 ### 6E — Results tables → st.dataframe + export (§6.3)
 
 Presentation only. The two custom-HTML tables became sortable `st.dataframe`s
