@@ -36,6 +36,21 @@ work if convergent corner values are wanted.)
 
 ## Phase 6 — UX / plotting overhaul (in progress, unreleased)
 
+### 6C.2 — Clarify: the contour is always an FEM field
+
+No results change; labeling only. The interactive contour (and the report
+figure) are computed from the FEM field **regardless of the solver dropdown**,
+because the classical/exact solvers produce values only at key points and
+along the wall midline — there is no continuous 2-D classical field to color.
+This was unlabeled, so a "Classical"/"Exact" run showed an FEM-meshed contour
+that looked inconsistent with the "exact" solver label.
+
+Added an `st.info` above the contour when the selected solver ≠ FEM: states
+the contour is an FEM visualization only, that the table and margins use the
+selected solver (no finite elements), and that the two agree away from sharp
+corners. The results table, margins, and governing banner are unchanged and
+remain fully closed-form / Bruhn-midline for the classical solvers.
+
 ### 6C.1 — Report figure: fix uniform-shear contour
 
 Bug fix (plotting only; table/margin numbers unaffected). The "Report figure

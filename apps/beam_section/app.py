@@ -733,6 +733,26 @@ def render() -> None:
             # fragment so toggling an overlay or switching the displayed field
             # reruns ONLY this block (hitting the cached field) — the rest of
             # the page and the FEM solve don't re-fire.
+            #
+            # NOTE: this contour is ALWAYS an FEM field, independent of the
+            # solver dropdown. The classical/exact solvers produce values only
+            # at key points and along the wall midline — not a continuous 2-D
+            # field — so FEM is used purely as the field visualizer. The table
+            # and margins still use the selected solver.
+            if solver_choice != "FEM":
+                st.info(
+                    f"**The contour below is an FEM field** "
+                    f"(sectionproperties), shown only to visualize the 2-D "
+                    f"stress distribution — the classical solver gives values "
+                    f"at discrete key points / along the midline, not a full "
+                    f"field. Your **results table and margins use "
+                    f"{solver_name}** (no finite elements). Away from sharp "
+                    f"re-entrant corners the FEM field and the classical values "
+                    f"agree; at a sharp inside corner the FEM field can read "
+                    f"higher (mesh-dependent — model a fillet for real corner "
+                    f"stress).",
+                    icon="ℹ️",
+                )
             from apps.beam_section.plotting_interactive import (
                 interactive_stress_contour, FIELD_LABELS,
             )
