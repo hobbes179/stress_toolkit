@@ -56,18 +56,47 @@ solver is linear-elastic and does no buckling analysis). The gate uses the
 so `min(element, Gerard)` would make the credit impossible to ever unlock.
 
 **Results impact (two effects):**
-1. **Compression bending allowable is capped at Fcc** for thin open sections.
-   Previously a compression-governed bending fiber used Fcy (v2.1.0); it is now
-   `min(Fcy, Fcc)`. For typical thin channels/I's/angles Fcc ≈ 0.4–0.5·Fcy, so
-   these compression margins **tighten (up to ~2×)** — fixing a real
-   *unconservatism* (the tool ignored that the compression flange buckles
-   locally at ~half Fcy). Applies to the interaction `Rb` term and the σ_bend
-   Results card; the general `|σ₂| vs Fcy` principal check is left as-is.
-2. **Cozzone credit unlock:** `effective_f_cozzone`'s blanket `f = 1.0` gate for
-   thin-walled open sections (decision D5) is replaced by a real check — the
-   `f·Ftu` plastic-bending credit is granted only when the section reaches Fcy
-   before crippling (stocky, low-b/t sections). Thin defaults stay locked
-   (unchanged from before); stocky sections now correctly earn `f > 1`.
+1. **Crippling is a standalone stability check on TOTAL compression** —
+   `σ_c vs Fcc`, its own margin row for thin-walled open sections. The applied
+   stress is the peak total compressive **normal** stress `|min(σ_total)| =
+   axial + bending`, NOT the bending part alone: crippling is driven by the
+   whole compressive stress, so pure axial compression (a compression member)
+   and combined axial+bending both count. Using bending-only would read `+∞` for
+   a strut and miss it entirely. `Fcc` is the element-method section crippling
+   stress (`min(Fcy, Fcc)`); for typical thin sections `Fcc ≈ 0.4–0.5·Fcy`, so
+   a crippling-critical member is governed here. This is a *stability* check,
+   kept OUT of the `(Ra+Rb)+Rs²` strength interaction (which would double-count
+   and mishandle the axial term). The strength interaction's compression bending
+   uses `Fcy`, not `Fcc`.
+
+   **Bending tension is its own explicit row** `σ_bend,t vs Fbu` (Cozzone
+   modulus of rupture, the one bending-specific allowable — the plastic-rupture
+   credit lives on the tension fiber). There is deliberately no symmetric
+   `σ_bend,c` strength row: the compression side's special concern is crippling
+   (the `σ_c vs Fcc` row), and compression *strength* is covered by
+   `|σ₂| vs Fcy` and the interaction. The interaction `Rb` still takes the worse
+   of the tension-fiber (÷Fbu) and compression-fiber (÷Fcy) ratios.
+
+   Net effect: pure/asymmetric compression is now caught by the crippling row;
+   axial tension that *relieves* bending compression correctly de-rates it (the
+   default channel's crippling applied drops to ~3.8 ksi and the section is
+   governed by the strength interaction at MS ≈ +0.25, not the earlier −0.02
+   from the interim bending-only-in-interaction form).
+2. **The D5 tension-side Cozzone gate is REMOVED.** `effective_f_cozzone`'s
+   blanket `f = 1.0` for thin-walled open sections was a *proxy* for "we don't
+   check crippling." Now that crippling is checked directly and load-dependently
+   on the compression fiber (effect 1), the gate is redundant and needlessly
+   load-independent (it locked on the weakest element even when that element is
+   in tension), so it is dropped: `effective_f_cozzone == f_cozzone` for every
+   shape, and the tension bending fiber keeps its plastic factor. A crippling-
+   sensitive section is governed by its `σ_bend,c vs Fcc` row instead — the
+   governing margin is identical to what the gate would give (compression is
+   lower), while the tension row now honestly shows `f·Ftu`. Residual: in an
+   unusual asymmetric case (tension extreme fiber + a slender compression
+   element at low stress near the neutral axis) the small tension `f` (≈1.05–
+   1.30) is granted where the strict plastic-moment argument is weak; bounded by
+   the compression row and `f`'s small size. The Crippling tab reframes from
+   "credit locked/unlocked" to "crippling-limited" (Fcc < Fcy) or not.
 
 ---
 

@@ -71,7 +71,8 @@ def test_bending_allowable_is_sign_aware():
     # crippling-capped Fcc.
     assert "Fbu" not in allow_c
     assert ("Fcy=" in allow_c) or ("Fcc=" in allow_c)
-    assert "Fbu=42.0" in allow_t                            # tension → Fbu
+    # tension → Fbu = f·Ftu (T-beam keeps its plastic factor now the gate is gone)
+    assert "Fbu=" in allow_t and "Fcc" not in allow_t
 
     # Same |σ_bend| magnitude, so the compression Rb (÷Fcy or ÷Fcc) must be the
     # larger, more-conservative ratio than the tension Rb (÷Fbu).
@@ -145,19 +146,21 @@ def test_no_rss_shear_combination_in_source():
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Cozzone gate (§3.7)
+# Cozzone factor — the v2 D5 tension-side gate is REMOVED (v2.2.0); crippling
+# is now checked on the compression fiber, so effective_f_cozzone == f_cozzone
+# for EVERY shape (see tests/test_crippling.py for the compression-side checks).
 # ──────────────────────────────────────────────────────────────────────────
-def test_cozzone_gate_thin_walled_open_sections():
+def test_cozzone_gate_removed_thin_walled_open_sections():
     ibeam = make_section("I-Beam / W-Shape", [4, 6, 0.375, 0.25])
     assert ibeam.f_cozzone == pytest.approx(1.07)
-    assert ibeam.effective_f_cozzone == pytest.approx(1.0)
+    assert ibeam.effective_f_cozzone == pytest.approx(ibeam.f_cozzone)  # no gate
 
     plus = make_section("Plus / Cross", [4, 4, 0.5, 0.5])
     assert plus.f_cozzone == pytest.approx(1.30)
-    assert plus.effective_f_cozzone == pytest.approx(1.0)
+    assert plus.effective_f_cozzone == pytest.approx(plus.f_cozzone)    # no gate
 
 
-def test_cozzone_gate_does_not_affect_solids_or_closed_sections():
+def test_cozzone_factor_unchanged_for_solids_or_closed_sections():
     rect = make_section("Rectangle", [4, 2, None, None])
     assert rect.effective_f_cozzone == pytest.approx(rect.f_cozzone) == pytest.approx(1.50)
 
@@ -214,7 +217,11 @@ def test_smoke_all_shapes(shape_name):
     assert np.isfinite(numeric).all()
 
     df_ms = calc_margin_table(df_stress, _MATERIAL, sec, 1.0, 1.5, loads)
-    assert len(df_ms) == 5
+    # §3.6 check set: 4 stress checks + bending-tension + interaction (= 6), plus
+    # a crippling row (σ_c vs Fcc) only for the thin-walled open shapes.
+    from library.analysis.crippling import crippling_summary
+    expected = 7 if crippling_summary(sec, _MATERIAL) is not None else 6
+    assert len(df_ms) == expected
     numeric_ms = [v for v in df_ms["MS"] if isinstance(v, (int, float))]
     assert len(numeric_ms) == len(df_ms)
     assert all(math.isfinite(v) for v in numeric_ms)

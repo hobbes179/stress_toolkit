@@ -18,7 +18,7 @@ import pytest
 from library.shapes import make_section
 from library.materials import MATERIALS
 from library.analysis.crippling import (
-    element_fcc, crippling_summary, cozzone_factor,
+    element_fcc, crippling_summary,
     compression_bending_allowable, _elements_for,
 )
 
@@ -80,33 +80,87 @@ def test_gerard_is_a_bounded_crosscheck():
     assert 0.0 < res.fcc_gerard <= 0.80 * _FCY + 1e-6
 
 
-def test_thin_section_stays_locked():
-    # A typical thin channel cripples below yield → credit locked (f = 1.0),
-    # and the compression bending allowable is capped at the crippling stress.
+def test_thin_section_is_crippling_limited():
+    # A typical thin channel cripples below yield → crippling-limited, and the
+    # compression bending allowable is capped at the crippling stress. There is
+    # no tension-side gate: the shape keeps its plastic factor for Fbu.
     sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
     res = crippling_summary(sec, _MAT)
-    assert not res.cozzone_unlocked
-    f, _ = cozzone_factor(sec, _MAT)
-    assert f == 1.0
+    assert res.crippling_limited
     assert res.fcc_element < _FCY
     assert compression_bending_allowable(_FCY, res) == pytest.approx(res.fcc_element)
+    assert sec.effective_f_cozzone == sec.f_cozzone       # gate removed
 
 
-def test_stocky_section_unlocks_full_factor():
-    # A chunky (low-b/t) angle reaches Fcy before crippling → the raw Cozzone
-    # plastic factor is restored, and the compression allowable is full Fcy.
+def test_stocky_section_is_not_crippling_limited():
+    # A chunky (low-b/t) angle reaches Fcy before crippling → not crippling-
+    # limited, and the compression allowable is the full Fcy.
     sec = make_section("L-Beam / Angle", [1.5, 1.5, 0.45, 0.45])
     res = crippling_summary(sec, _MAT)
-    assert res.cozzone_unlocked
-    f, _ = cozzone_factor(sec, _MAT)
-    assert f == pytest.approx(sec.f_cozzone) and f > 1.0
+    assert not res.crippling_limited
     assert compression_bending_allowable(_FCY, res) == pytest.approx(_FCY)
 
 
-def test_non_thinwalled_factor_is_unchanged():
-    # cozzone_factor must not disturb solids — they keep their geometric
-    # effective_f_cozzone and get no crippling summary.
+def test_crippling_is_a_standalone_row_on_total_compression():
+    # Crippling is its own margin row (σ_c vs Fcc), and its applied stress is the
+    # peak TOTAL compressive normal stress |min(σ_total)| — not the bending part.
+    from apps.beam_section.calculations import (
+        Loads, calc_stress_at_points, calc_margin_table,
+    )
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    res = crippling_summary(sec, _MAT)
+    assert res.fcc_element < _MAT.Fcy               # crippling below yield
+    loads = Loads(P=0, Vy=0, Vz=0, My=20000, Mz=0, T=0)
+    df = calc_stress_at_points(sec, loads, solver="Classical")
+    ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, loads)
+
+    crow = ms[ms["Check"].str.startswith("σ_c vs")].iloc[0]
+    assert "Fcc" in crow["Check"] and "crippling" in crow["Check"]
+    assert crow["Allow"] == pytest.approx(res.fcc_element, rel=1e-6)
+    assert crow["Applied"] == pytest.approx(abs(df["σ_total"].min()), rel=1e-6)
+    # The STRENGTH interaction no longer carries Fcc — that is the crippling row.
+    inter = ms[ms["Check"].str.contains("Combined")].iloc[0]["Allow"]
+    assert "Fcc" not in inter
+
+
+def test_crippling_row_captures_pure_axial_compression():
+    # The whole point of using σ_total: a compression MEMBER (pure axial, no
+    # bending) must trigger crippling. A bending-only check would read +∞ here.
+    from apps.beam_section.calculations import (
+        Loads, calc_stress_at_points, calc_margin_table,
+    )
+    sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
+    res = crippling_summary(sec, _MAT)
+    # axial compression at ~90% of the crippling stress (P in lb, stress in ksi)
+    P = -0.9 * res.fcc_element * sec.area() * 1000.0
+    loads = Loads(P=P, Vy=0, Vz=0, My=0, Mz=0, T=0)
+    df = calc_stress_at_points(sec, loads, solver="Classical")
+    ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, loads)
+
+    crow = ms[ms["Check"].str.startswith("σ_c vs")].iloc[0]
+    assert crow["Applied"] == pytest.approx(0.9 * res.fcc_element, rel=1e-3)
+    # bending rows see ~zero applied stress; only crippling catches the member
+    bt = ms[ms["Check"].str.contains("σ_bend,t")].iloc[0]
+    assert bt["Applied"] == pytest.approx(0.0, abs=1e-6)
+    assert crow["MS"] < 0.0                              # 1/(1.5·0.9) − 1 < 0
+
+
+def test_imported_section_skips_crippling_without_crashing():
+    # An imported polygon has no catalog dims / plate-element decomposition, so
+    # crippling_summary must return None (not raise), and the compression
+    # bending allowable falls back to Fcy.
+    pytest.importorskip("sectionproperties")
+    pytest.importorskip("shapely")
+    from library.shapes.import_section import make_imported_section, parse_vertex_text
+    loops = parse_vertex_text("0,0\n3,0\n3,0.25\n0.25,0.25\n0.25,6\n0,6")
+    isec, _ = make_imported_section(loops)
+    assert crippling_summary(isec, _MAT) is None
+    assert compression_bending_allowable(_MAT.Fcy, None) == _MAT.Fcy
+
+
+def test_solids_have_no_crippling_and_keep_their_factor():
+    # Solids do not plate-cripple → no crippling summary, and effective_f_cozzone
+    # is just the shape's plastic factor (the gate is gone for every shape).
     rect = make_section("Rectangle", [2, 3, None, None])
-    f, res = cozzone_factor(rect, _MAT)
-    assert res is None
-    assert f == rect.effective_f_cozzone == rect.f_cozzone   # solid keeps its f
+    assert crippling_summary(rect, _MAT) is None
+    assert rect.effective_f_cozzone == rect.f_cozzone == pytest.approx(1.50)

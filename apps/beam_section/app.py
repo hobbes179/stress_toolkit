@@ -753,16 +753,14 @@ def render() -> None:
             icon="⚠️",
         )
 
-    # Crippling-aware Cozzone factor (thin-walled open sections): the plastic-
-    # bending credit unlocks only if the section reaches Fcy before local
-    # crippling; the crippling summary `cr` also feeds the Crippling tab and the
-    # compression bending-allowable cap on the Results card.
+    # Tension bending keeps the shape's Cozzone plastic factor; local crippling
+    # is checked on the compression fiber (Crippling tab + the σ_c vs Fcc
+    # crippling row on total compression), not gated on the tension side.
     from library.analysis.crippling import (
-        cozzone_factor, compression_bending_allowable,
+        crippling_summary, compression_bending_allowable,
     )
-    _f_cozzone_eff, cr = cozzone_factor(section, material)
-    fbu = _f_cozzone_eff * (material.Ftu or 0.0)
-    cozzone_gated = _f_cozzone_eff != section.f_cozzone
+    cr = crippling_summary(section, material)
+    fbu = section.f_cozzone * (material.Ftu or 0.0)
 
     tab_geo, tab_load, tab_res, tab_marg, tab_crip, tab_form, tab_val = st.tabs(
         ["Geometry", "Loads", "Results", "Margins", "Crippling",
@@ -817,7 +815,7 @@ def render() -> None:
                 ("J",   section.J_torsion(), "in⁴"),
                 ("Sy",  section.Sy(),        "in³"),
                 ("Sz",  section.Sz(),        "in³"),
-                ("f",   section.effective_f_cozzone, "shape factor"),
+                ("f",   section.f_cozzone, "shape factor"),
             ]:
                 info_card(label, f"{val:.2f}", unit)
             if abs(iyz_val) > 1e-4:
@@ -825,11 +823,6 @@ def render() -> None:
                 if na_angle is not None:
                     info_card("NA angle", f"{na_angle:.1f}", "deg",
                               sub="neutral axis vs +Y (unsymmetric bending)")
-            if cozzone_gated:
-                st.caption(
-                    f"f = 1.0 (plastic bending gated pending crippling check — "
-                    f"table value {section.f_cozzone:.2f} not used)"
-                )
             sc = shear_center(section)
             if sc is not None:
                 info_card("SC", f"({sc[0]:.3f}, {sc[1]:.3f})", "in",
@@ -872,8 +865,7 @@ def render() -> None:
                 )
             if material.Ftu is not None:
                 info_card("Fbu", f"{fbu:.1f}", "ksi",
-                          sub=f"= f·Ftu  (f = {section.effective_f_cozzone:.2f})",
-                          flag="GATED" if cozzone_gated else None)
+                          sub=f"= f·Ftu  (f = {section.f_cozzone:.2f}, tension fiber)")
             st.caption(material.source)
 
     # ═══════════════════════════ RESULTS ═══════════════════════════════
@@ -882,18 +874,27 @@ def render() -> None:
                        desc="extreme-fiber results across the section")
         # Order tracks find_governing() (σ1, σ2, σ_vm, τ_total, σ_bend); each
         # paired with the allowable its §3.6 check uses (σ1↔Ftu, σ2↔Fcy,
-        # σ_vm↔Fty, τ↔Fsu). The bending card is sign-aware: Fbu = f·Ftu is a
-        # tension-fiber modulus of rupture, so a COMPRESSION-governed bending
-        # fiber is shown against Fcy — capped at the local crippling stress Fcc
-        # when the compression element crripples below yield (see Crippling tab).
-        _sb_tension = govs[4].value >= 0.0
-        if _sb_tension:
+        # σ_vm↔Fty, τ↔Fsu). The bending card shows the governing bending fiber by
+        # RATIO — tension ÷ Fbu (= f·Ftu, modulus of rupture) vs compression ÷
+        # Fcy (yield). Local crippling is its own card/row (σ_c vs Fcc), a
+        # separate stability check on total compression, not folded in here.
+        _fcy = material.Fcy or 0.0
+        _sb_t = max(float(df_stress["σ_bend"].max()), 0.0)
+        _sb_c = abs(min(float(df_stress["σ_bend"].min()), 0.0))
+        _r_t = _sb_t / fbu if fbu > 0 else 0.0
+        _r_c = _sb_c / _fcy if _fcy > 0 else 0.0
+        if _r_c >= _r_t:                              # compression fiber governs
+            _bidx = df_stress["σ_bend"].idxmin()
+            _fb_pair = (_fcy, "Fcy", sf_yield)
+        else:                                         # tension fiber governs
+            _bidx = df_stress["σ_bend"].idxmax()
             _fb_pair = (fbu, "Fbu", sf_ult)
-        else:
-            _fcy = material.Fcy or 0.0
-            _fb_allow = compression_bending_allowable(_fcy, cr)
-            _fb_lbl = "Fcc" if (cr is not None and _fb_allow < _fcy - 1e-9) else "Fcy"
-            _fb_pair = (_fb_allow, _fb_lbl, sf_yield)
+        _brow = df_stress.loc[_bidx]
+        from apps.beam_section.calculations import GoverningStress
+        govs = list(govs)
+        govs[4] = GoverningStress("Max σ_bend (bending)", "σ_bend",
+                                  _brow["KP"], _brow["Description"],
+                                  float(_brow["σ_bend"]), "ksi")
         stress_allowables = [
             (material.Ftu or 0.0, "Ftu", sf_ult),
             (material.Fcy or 0.0, "Fcy", sf_yield),
@@ -1131,22 +1132,28 @@ def render() -> None:
         else:
             _fcy = cr.Fcy
             _fcap = compression_bending_allowable(material.Fcy or 0.0, cr)
-            # Gate verdict
-            if cr.cozzone_unlocked:
-                st.success(
-                    f"**Cozzone plastic-bending credit UNLOCKED** — the section "
-                    f"reaches Fcy ({_fcy:.0f} ksi) before crippling, so "
-                    f"f = {section.f_cozzone:.2f} (Fbu = f·Ftu) is granted.",
-                    icon="✅",
+            # Crippling verdict: crippling is a standalone stability check on the
+            # total compressive stress (σ_c vs Fcc) — no tension-side plastic gate.
+            if cr.crippling_limited:
+                st.warning(
+                    f"**Crippling-limited.** Section crippling Fcc ≈ "
+                    f"{cr.fcc_element:.1f} ksi < Fcy ({_fcy:.0f} ksi): the thin "
+                    f"compression elements buckle locally before yield. The "
+                    f"**peak total compression (axial + bending) is checked "
+                    f"against Fcc = {_fcap:.1f} ksi** — the `σ_c vs Fcc` row on "
+                    f"the Margins tab. The tension fiber keeps its plastic factor "
+                    f"f = {section.f_cozzone:.2f} (Fbu = f·Ftu).",
+                    icon="⚠️",
                 )
             else:
-                st.info(
-                    f"**Cozzone plastic-bending credit LOCKED (f = 1.00).** "
-                    f"Section crippling Fcc ≈ {cr.fcc_element:.1f} ksi < Fcy "
-                    f"({_fcy:.0f} ksi): the compression elements cripple before "
-                    f"full plasticity. A **compression** bending fiber is checked "
-                    f"against Fcc = {_fcap:.1f} ksi (not Fcy).",
-                    icon="ℹ️",
+                st.success(
+                    f"**Not crippling-limited.** Section crippling Fcc ≈ "
+                    f"{cr.fcc_element:.1f} ksi ≥ Fcy ({_fcy:.0f} ksi): the "
+                    f"compression elements reach yield before local buckling, so "
+                    f"the compression bending fiber uses the full Fcy and the "
+                    f"tension fiber earns its plastic factor f = "
+                    f"{section.f_cozzone:.2f}.",
+                    icon="✅",
                 )
 
             # Per-element breakdown (element method)

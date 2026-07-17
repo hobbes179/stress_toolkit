@@ -38,11 +38,11 @@ values from the Cozzone simplified method (Cozzone 1943, NACA TN-1818).
 A rigorous Cozzone analysis derives f from both shape AND material stress-
 strain behaviour. The values used here are conservative for ductile metals.
 
-⚠️ GATED (v2 D5, CHANGELOG.md v1.1.0): for thin-walled open sections
-(category == "Open thin-walled"), `effective_f_cozzone` overrides the
-table value below to 1.0 — plastic-bending credit is not substantiated
-without a crippling check. Use `effective_f_cozzone`, not `f_cozzone`,
-wherever Fbu is computed. Solids and closed sections are unaffected.
+v2.2.0: the old D5 gate that forced f = 1.0 for thin-walled open sections is
+REMOVED — local crippling is now checked directly on the compression bending
+fiber (`library/analysis/crippling.py`), so every shape keeps its table value
+and `effective_f_cozzone` == `f_cozzone`. A crippling-sensitive section is
+governed by its `σ_bend,c vs Fcc` margin row instead of a tension-side gate.
 
   Rectangle:              f = 1.50
   Circle:                 f = 1.70
@@ -226,15 +226,18 @@ class Section:
     @property
     def effective_f_cozzone(self) -> float:
         """
-        Cozzone plastic-bending shape factor used for Fbu = f·Ftu, gated
-        per v2 decision D5 (see CHANGELOG.md, v1.1.0): thin-walled open
-        sections are forced to f = 1.0 — plastic-bending credit is not
-        substantiated without a crippling check for these shapes. Solid
-        and compact closed shapes keep their documented table values
-        (`f_cozzone`).
+        Cozzone plastic-bending shape factor used for Fbu = f·Ftu. Now simply
+        the shape's `f_cozzone` for every section.
+
+        History: v2 decision D5 forced this to 1.0 for thin-walled open sections
+        as a proxy for "plastic-bending credit is unsubstantiated without a
+        crippling check." That blanket gate is REMOVED in v2.2.0 — local
+        crippling is now checked directly and load-dependently on the
+        compression bending fiber (`library/analysis/crippling.py`,
+        `σ_bend,c vs Fcc`), so the tension fiber keeps the shape's plastic
+        factor and a crippling-sensitive section is governed by its compression
+        row instead. Retained as an alias so callers/display need no change.
         """
-        if self.is_open_section and self.is_thin_walled:
-            return 1.0
         return self.f_cozzone
 
     # ── Geometry / polygon-derived properties (Phase 1) ──────────────────

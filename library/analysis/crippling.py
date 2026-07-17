@@ -29,13 +29,16 @@ DEFAULTS flagged ⚠️ VERIFY for reconciliation against the user's reference
 (Bruhn C7 / Niu). Crippling cannot be cross-checked against the linear-elastic
 FEM solver (it does no buckling analysis), so its reference is published curves.
 
-The Cozzone gate: the f·Ftu plastic-bending credit is a whole-section plastic-
-moment credit and is only earned if the compression elements can develop the
-plastic state (~Fcy) BEFORE they cripple. So the credit unlocks only when the
-section crippling stress (area-weighted ELEMENT method) reaches Fcy; otherwise
-f stays 1.0 and the compression bending allowable is capped at that Fcc. The
-gate uses the element method (not Gerard) because Gerard's empirical 0.80·Fcy
-plateau can never reach Fcy — it is a displayed cross-check only.
+How crippling enters the margins (v2.2.0 — no tension-side gate): the
+compression bending fiber is checked directly against Fcy capped at the section
+crippling stress Fcc (`compression_bending_allowable`), which is the load-
+dependent `σ_bend,c vs Fcc` margin row. A crippling-sensitive section therefore
+shows up as that row governing and going negative. The tension bending fiber
+keeps the shape's plastic factor (Fbu = f·Ftu) — the old blanket "f → 1.0 for
+thin-walled open sections" gate (decision D5) was a proxy for "we don't check
+crippling," and is removed now that we check it directly on the compression
+side. The gate/allowable use the ELEMENT method, not Gerard, whose empirical
+0.80·Fcy plateau is a displayed cross-check only.
 """
 from __future__ import annotations
 
@@ -95,13 +98,12 @@ class CripplingResult:
     notes: list = field(default_factory=list)
 
     @property
-    def cozzone_unlocked(self) -> bool:
-        """Plastic-bending credit is earned only if the section crippling stress
-        reaches Fcy (the compression elements can develop the plastic state
-        before crippling). Gated on the ELEMENT method — Gerard's 0.80·Fcy
-        plateau can never reach Fcy, so it cannot answer this and is a display-
-        only cross-check (see crippling_summary)."""
-        return self.fcc_governing >= self.Fcy - 1e-9
+    def crippling_limited(self) -> bool:
+        """True when local crippling caps the section below yield (Fcc < Fcy),
+        i.e. the compression bending allowable is reduced from Fcy to Fcc. Uses
+        the ELEMENT method — Gerard's 0.80·Fcy plateau is a display-only cross-
+        check (see crippling_summary)."""
+        return self.fcc_governing < self.Fcy - 1e-9
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -160,6 +162,11 @@ def _elements_for(section) -> Optional[list]:
     outstanding element is "OEF" (free at its tip), each captured element "NEF".
     """
     name = getattr(section, "name", "")
+    # Imported / custom polygons have no catalog dims (d1..d4) and no known
+    # plate-element decomposition, so crippling does not apply — bail before
+    # touching dims (an ImportedSection has no .d1).
+    if name not in _GERARD_G:
+        return None
     d1, d2, d3, d4 = section.d1, section.d2, section.d3, section.d4
 
     if name == "I-Beam / W-Shape":          # d1=bf d2=d d3=tf d4=tw
@@ -275,31 +282,6 @@ def crippling_summary(section, material) -> Optional[CripplingResult]:
         fcc_element=fcc_w, fcc_min=fcc_min, fcc_gerard=fcc_g,
         fcc_governing=fcc_governing, gerard_g=g, notes=notes,
     )
-
-
-def cozzone_factor(section, material) -> tuple[float, Optional[CripplingResult]]:
-    """
-    Crippling-aware Cozzone shape factor for Fbu = f·Ftu, and the crippling
-    summary behind the decision.
-
-    • Non-thin-walled / non-open shapes: unchanged — the shape's own
-      `effective_f_cozzone` (solids keep their documented plastic factor).
-    • Thin-walled open shapes: the plastic-bending credit is UNLOCKED (f =
-      section.f_cozzone) only when the governing element can reach Fcy before
-      crippling; otherwise f = 1.0 (the current conservative default).
-
-    Returns (f_effective, CripplingResult | None).
-    """
-    # Solids / closed tubes keep their existing (geometry-only) behaviour.
-    if not (getattr(section, "is_open_section", False)
-            and getattr(section, "is_thin_walled", False)):
-        return section.effective_f_cozzone, None
-
-    res = crippling_summary(section, material)
-    if res is None:
-        return 1.0, None                       # no data → stay gated (current)
-    f = section.f_cozzone if res.cozzone_unlocked else 1.0
-    return f, res
 
 
 def compression_bending_allowable(Fcy: float,

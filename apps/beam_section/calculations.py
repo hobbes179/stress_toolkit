@@ -13,6 +13,7 @@ Loads are in lb (forces) and lb·in (moments).
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Optional
 import math
 
 import numpy as np
@@ -379,13 +380,24 @@ def calc_margin_table(
       2. σ₁ vs Ftu (ultimate, max principal — only governs when σ₁ > 0)
       3. |σ₂| vs Fcy (compression yield — only governs when σ₂ < 0)
       4. τ_wall vs Fsu (shear ultimate)
-      5. Combined interaction: (Ra+Rb) + Rs² = 1 curve (Bruhn C4-family),
+      5. σ_bend,t vs Fbu — bending TENSION fiber vs the Cozzone modulus of
+         rupture Fbu = f·Ftu (the plastic-rupture credit lives on the tension
+         fiber; there is no symmetric compression strength row — compression
+         strength is covered by check 3 and the interaction).
+      6. Combined interaction: (Ra+Rb) + Rs² = 1 curve (Bruhn C4-family),
          replacing the RSS-style 1/√(Rc²+Rb²+Rs²) − 1 form, which was
          unconservative (reported MS = +0.41 at a true zero-margin
          axial+bending state — see CHANGELOG.md). Ra/Rb/Rs are computed
          from SF_ult-factored applied stresses (see CHANGELOG.md
-         "Interaction SF" note) so this check responds to the SF_ult
-         control like every other row.
+         "Interaction SF" note). Rb takes the worse of the tension-fiber
+         (÷Fbu) and compression-fiber (÷Fcy) bending ratios. This is a STRENGTH
+         interaction — crippling is checked separately (below).
+      7. σ_c vs Fcc — local CRIPPLING (stability), thin-walled open sections
+         only. Peak TOTAL compressive normal stress (axial + bending) vs the
+         section crippling stress Fcc (v2.2.0). Uses σ_total, so pure axial
+         compression and combined axial+bending both count — bending alone
+         would miss a compression member. Omitted where no plate-element
+         decomposition exists (solids, closed tubes, imports).
 
     Removed checks (see CHANGELOG.md for rationale): "σ₁ vs Fty" (max-
     normal-stress yield criterion — unconservative vs distortion energy
@@ -399,37 +411,48 @@ def calc_margin_table(
     per-wall combination without changing this table's structure.
     """
     from library.analysis.crippling import (
-        cozzone_factor, compression_bending_allowable,
+        crippling_summary, compression_bending_allowable,
     )
 
     Fty = material.Fty or 0.0
     Ftu = material.Ftu or 0.0
     Fcy = material.Fcy or 0.0
     Fsu = material.Fsu or 0.0
-    # Crippling-aware Cozzone factor: for a thin-walled open section the f·Ftu
-    # plastic-bending credit is unlocked only when the section reaches Fcy
-    # before local crippling; otherwise f = 1.0 (CLAUDE.md 10c, crippling.py).
-    f_cozzone_eff, cr_res = cozzone_factor(section, material)
-    Fbu = f_cozzone_eff * Ftu
+    # Tension bending keeps the shape's Cozzone plastic factor (Fbu = f·Ftu).
+    # Local crippling is NOT gated here — it is checked directly and load-
+    # dependently on the compression fiber via compression_bending_allowable
+    # (the σ_bend,c vs Fcc row). See crippling.py / CHANGELOG v2.2.0.
+    Fbu = section.f_cozzone * Ftu
+    cr_res = crippling_summary(section, material)
 
     s1_max  = df_stress["σ1"].max()
     s2_min  = df_stress["σ2"].min()
     svm_max = df_stress["σ_vm"].max()
     tau_max = df_stress["τ_total"].max()
-    # Governing bending fiber by MAGNITUDE, keeping its SIGN. Fbu = f·Ftu is a
-    # tension-fiber modulus of rupture (Cozzone) and is meaningless for a
-    # compression fiber — so the bending allowable is chosen by the fiber sign:
-    #   tension     → Fbu (= f·Ftu, plastic-bending credit)
-    #   compression → Fcy, capped at the local crippling stress Fcc when the
-    #                 compression element would cripple below yield.
-    sb_signed = float(df_stress["σ_bend"].loc[df_stress["σ_bend"].abs().idxmax()])
-    sb_max  = abs(sb_signed)
-    sb_tension = sb_signed >= 0.0
-    if sb_tension:
-        Fb, Fb_label = Fbu, "Fbu"
-    else:
-        Fb = compression_bending_allowable(Fcy, cr_res)
-        Fb_label = "Fcc" if (cr_res is not None and Fb < Fcy - 1e-9) else "Fcy"
+    # Bending STRENGTH ratio (for the strength interaction), worst fiber by
+    # ratio: the tension fiber against Fbu = f·Ftu (Cozzone modulus of rupture),
+    # the compression fiber against Fcy (compression yield). Local crippling is a
+    # separate STABILITY check below — it is not folded into this strength
+    # interaction — so the compression bending here uses the yield allowable Fcy,
+    # not Fcc.
+    sb_tension_max = max(float(df_stress["σ_bend"].max()), 0.0)   # largest tension fiber
+    sb_comp_max = abs(min(float(df_stress["σ_bend"].min()), 0.0)) # largest compression fiber
+    rb_tension = sb_tension_max / Fbu if Fbu > 0 else 0.0
+    rb_comp = sb_comp_max / Fcy if Fcy > 0 else 0.0
+    if rb_comp >= rb_tension:                    # compression fiber governs
+        sb_max, Fb, Fb_label = sb_comp_max, Fcy, "Fcy"
+    else:                                        # tension fiber governs
+        sb_max, Fb, Fb_label = sb_tension_max, Fbu, "Fbu"
+
+    # Local crippling (stability): the peak TOTAL compressive normal stress
+    # (axial + bending) vs the section crippling stress Fcc. Uses σ_total, NOT
+    # σ_bend — crippling is driven by the whole compressive stress, so pure
+    # axial compression and combined axial+bending are both captured (bending-
+    # only would miss a compression member entirely). Only meaningful where a
+    # plate-element decomposition exists (thin-walled open catalog shapes).
+    sc_comp = abs(min(float(df_stress["σ_total"].min()), 0.0))
+    Fcc_allow = compression_bending_allowable(Fcy, cr_res)   # min(Fcy, Fcc)
+    Fcc_label = "Fcc" if (cr_res is not None and Fcc_allow < Fcy - 1e-9) else "Fcy"
 
     A = section.area()
     sa = loads.P / A / 1000 if A > 0 else 0.0
@@ -470,12 +493,32 @@ def calc_margin_table(
          "Allow": Fsu, "SF": sf_ult, "Applied": tau_max,
          "MS": _safe_ms(Fsu, sf_ult, tau_max)},
 
+        # Bending TENSION fiber vs the Cozzone modulus of rupture Fbu = f·Ftu —
+        # the one bending-specific allowable (the plastic-rupture credit lives on
+        # the tension fiber). The compression side's special concern is crippling,
+        # handled by the separate stability row below (total compression vs Fcc),
+        # so there is no symmetric σ_bend,c strength row: compression strength is
+        # covered by |σ₂| vs Fcy and the interaction.
+        {"Check": "σ_bend,t vs Fbu (bending, tension)",
+         "Allow": Fbu, "SF": sf_ult, "Applied": sb_tension_max,
+         "MS": _safe_ms(Fbu, sf_ult, sb_tension_max)},
+
         {"Check": "Combined interaction (Ra+Rb)+Rs²=1",
          "Allow": f"Fa={Fa:.1f}  {Fb_label}={Fb:.1f}  Fsu={Fsu:.1f}",
          "SF": sf_ult,
          "Applied": f"Ra={Ra:.3f}  Rb={Rb:.3f}  Rs={Rs:.3f}",
          "MS": ms_int},
     ]
+
+    # Crippling (stability) — a distinct failure mode, added only where a plate-
+    # element decomposition exists (thin-walled open catalog shapes). Inserted
+    # before the interaction row so the strength interaction stays last.
+    if cr_res is not None:
+        rows.insert(-1, {
+            "Check": f"σ_c vs {Fcc_label} (crippling, axial+bending)",
+            "Allow": Fcc_allow, "SF": sf_ult, "Applied": sc_comp,
+            "MS": _safe_ms(Fcc_allow, sf_ult, sc_comp)})
+
     return pd.DataFrame(rows)
 
 
@@ -493,14 +536,33 @@ class GoverningStress:
     unit:        str    # "ksi"
 
 
-# Maps each single-stress margin check to the stress column whose governing
-# key point locates it (the combined-interaction row is section-wide).
+# Maps each single-stress margin check to (column, direction) — the stress
+# column whose governing key point locates it, and whether that is the max or
+# min of the column. The combined-interaction row is section-wide (not here).
 _CHECK_COLUMN = {
-    "σ_vm vs Fty (yield)":              "σ_vm",
-    "σ₁ vs Ftu (ultimate)":            "σ1",
-    "|σ₂| vs Fcy (compression yield)": "σ2",
-    "τ_wall vs Fsu (shear ultimate)":  "τ_total",
+    "σ_vm vs Fty (yield)":              ("σ_vm",    "max"),
+    "σ₁ vs Ftu (ultimate)":            ("σ1",      "max"),
+    "|σ₂| vs Fcy (compression yield)": ("σ2",      "min"),
+    "τ_wall vs Fsu (shear ultimate)":  ("τ_total", "max"),
 }
+
+
+def _locate_check(check: str, df_stress: pd.DataFrame) -> Optional[str]:
+    """KP location string for a margin check, or None for the section-wide
+    combined-interaction row. The bending-tension row locates on σ_bend (max);
+    the crippling row on the most-compressed total normal stress σ_total (min)."""
+    spec = _CHECK_COLUMN.get(check)
+    if spec is None:
+        if "σ_bend,t" in check:
+            spec = ("σ_bend", "max")
+        elif check.startswith("σ_c vs"):        # crippling — total compression
+            spec = ("σ_total", "min")
+    if spec is None:
+        return None
+    col, direction = spec
+    gidx = df_stress[col].idxmin() if direction == "min" else df_stress[col].idxmax()
+    row = df_stress.loc[gidx]
+    return f"{row['KP']} ({row['y']:.2f}, {row['z']:.2f})"
 
 
 def governing_summary(df_stress: pd.DataFrame, df_ms: pd.DataFrame):
@@ -516,12 +578,8 @@ def governing_summary(df_stress: pd.DataFrame, df_ms: pd.DataFrame):
         return 999.0, "—", "—"
     idx, min_ms = min(numeric, key=lambda t: t[1])
     check = str(df_ms.loc[idx, "Check"])
-    col = _CHECK_COLUMN.get(check)
-    if col is None:                       # combined interaction — section-wide
-        return min_ms, check, "section (combined)"
-    gidx = df_stress[col].idxmin() if col == "σ2" else df_stress[col].idxmax()
-    row = df_stress.loc[gidx]
-    return min_ms, check, f"{row['KP']} ({row['y']:.2f}, {row['z']:.2f})"
+    loc = _locate_check(check, df_stress)
+    return min_ms, check, (loc if loc is not None else "section (combined)")
 
 
 def find_governing(df_stress: pd.DataFrame) -> list[GoverningStress]:

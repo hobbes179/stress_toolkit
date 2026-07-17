@@ -240,13 +240,22 @@ Shape factor `f` is a simplified constant per shape class (attribute
 NACA TN-1818. See `shapes.py` docstring for the full table and note on
 when a rigorous Cozzone analysis would be warranted.
 
-**Crippling gate (v2.2.0, `library/analysis/crippling.py`).** For thin-walled
-open sections the `f·Ftu` plastic-bending credit is a whole-section plastic-
-moment credit and is unlocked only when the section reaches Fcy before local
-crippling; otherwise `f = 1.0` (replaces D5's blanket gate). The compression
-bending allowable is `min(Fcy, Fcc)` where `Fcc` is the element-method section
-crippling stress. Crippling is a section+material property (needs no length/
-fixity); coefficients are ⚠️ VERIFY defaults. See CHANGELOG v2.2.0.
+**Crippling (v2.2.0, `library/analysis/crippling.py`).** Local crippling is a
+**standalone stability check** — the `σ_c vs Fcc` margin row (thin-walled open
+sections only). Applied stress = the peak **total** compressive normal stress
+`|min(σ_total)| = axial + bending`, so pure axial compression (a strut) and
+combined axial+bending both count — bending alone would miss a compression
+member. `Fcc` = element-method section crippling stress (`min(Fcy, Fcc)`). It is
+kept OUT of the `(Ra+Rb)+Rs²` strength interaction (that would double-count /
+mishandle axial); the interaction's compression bending uses `Fcy`. The tension
+fiber keeps the shape's plastic factor (`Fbu = f·Ftu`, the `σ_bend,t` row). The
+old **D5 tension-side gate** (forced `f = 1.0` for thin-walled open) is
+**removed** — it was a proxy for the missing crippling check, so
+`effective_f_cozzone == f_cozzone` for every shape now. Crippling is a
+section+material property (no length/fixity); coefficients are ⚠️ VERIFY
+defaults. Custom/imported shapes have no plate-element decomposition, so they
+get **no crippling row** (compression falls back to Fcy) — a known gap. See
+CHANGELOG v2.2.0.
 
 ### Unsymmetric bending (v2 — the old geometric-axis assumption is GONE)
 Normal stress uses the full unsymmetric-bending tensor (handoff §3.1):
