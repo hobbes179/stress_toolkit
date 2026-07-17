@@ -753,11 +753,20 @@ def render() -> None:
             icon="⚠️",
         )
 
-    fbu = section.effective_f_cozzone * (material.Ftu or 0.0)
-    cozzone_gated = section.effective_f_cozzone != section.f_cozzone
+    # Crippling-aware Cozzone factor (thin-walled open sections): the plastic-
+    # bending credit unlocks only if the section reaches Fcy before local
+    # crippling; the crippling summary `cr` also feeds the Crippling tab and the
+    # compression bending-allowable cap on the Results card.
+    from library.analysis.crippling import (
+        cozzone_factor, compression_bending_allowable,
+    )
+    _f_cozzone_eff, cr = cozzone_factor(section, material)
+    fbu = _f_cozzone_eff * (material.Ftu or 0.0)
+    cozzone_gated = _f_cozzone_eff != section.f_cozzone
 
-    tab_geo, tab_load, tab_res, tab_marg, tab_form, tab_val = st.tabs(
-        ["Geometry", "Loads", "Results", "Margins", "Formulas", "Validation"])
+    tab_geo, tab_load, tab_res, tab_marg, tab_crip, tab_form, tab_val = st.tabs(
+        ["Geometry", "Loads", "Results", "Margins", "Crippling",
+         "Formulas", "Validation"])
 
     # ═══════════════════════════ GEOMETRY ═══════════════════════════════
     with tab_geo:
@@ -875,11 +884,16 @@ def render() -> None:
         # paired with the allowable its §3.6 check uses (σ1↔Ftu, σ2↔Fcy,
         # σ_vm↔Fty, τ↔Fsu). The bending card is sign-aware: Fbu = f·Ftu is a
         # tension-fiber modulus of rupture, so a COMPRESSION-governed bending
-        # fiber is shown against Fcy (compression yield) instead — see the
-        # sign-aware Fb in calc_margin_table.
+        # fiber is shown against Fcy — capped at the local crippling stress Fcc
+        # when the compression element crripples below yield (see Crippling tab).
         _sb_tension = govs[4].value >= 0.0
-        _fb_pair = ((fbu, "Fbu", sf_ult) if _sb_tension
-                    else (material.Fcy or 0.0, "Fcy", sf_yield))
+        if _sb_tension:
+            _fb_pair = (fbu, "Fbu", sf_ult)
+        else:
+            _fcy = material.Fcy or 0.0
+            _fb_allow = compression_bending_allowable(_fcy, cr)
+            _fb_lbl = "Fcc" if (cr is not None and _fb_allow < _fcy - 1e-9) else "Fcy"
+            _fb_pair = (_fb_allow, _fb_lbl, sf_yield)
         stress_allowables = [
             (material.Ftu or 0.0, "Ftu", sf_ult),
             (material.Fcy or 0.0, "Fcy", sf_yield),
@@ -1095,6 +1109,109 @@ def render() -> None:
         exp_ms["SF"]              = exp_ms["SF"].map(lambda v: f"{v:.2f}")
         exp_ms["MS"]              = exp_ms["MS"].map(_fmt_ms)
         table_export_controls(exp_ms, "margins.csv", "margins")
+
+    # ═══════════════════════════ CRIPPLING ═════════════════════════════
+    with tab_crip:
+        section_header("Local Crippling", number="—",
+                       desc="thin-element buckling + Cozzone plastic-bending gate")
+        _is_thin_open = (getattr(section, "is_open_section", False)
+                         and getattr(section, "is_thin_walled", False))
+        if cr is None:
+            if _is_thin_open:
+                st.info("This material lacks the Fcy and/or compression modulus "
+                        "(Ec/E) that the crippling curves need.", icon="ℹ️")
+            else:
+                st.info(
+                    "Local crippling applies to **thin-walled open sections** "
+                    "(I, T, L, C, Z, Plus). A solid, a closed tube, or an "
+                    "imported polygon does not plate-cripple this way, so the "
+                    "Cozzone factor for this section is unchanged.",
+                    icon="ℹ️",
+                )
+        else:
+            _fcy = cr.Fcy
+            _fcap = compression_bending_allowable(material.Fcy or 0.0, cr)
+            # Gate verdict
+            if cr.cozzone_unlocked:
+                st.success(
+                    f"**Cozzone plastic-bending credit UNLOCKED** — the section "
+                    f"reaches Fcy ({_fcy:.0f} ksi) before crippling, so "
+                    f"f = {section.f_cozzone:.2f} (Fbu = f·Ftu) is granted.",
+                    icon="✅",
+                )
+            else:
+                st.info(
+                    f"**Cozzone plastic-bending credit LOCKED (f = 1.00).** "
+                    f"Section crippling Fcc ≈ {cr.fcc_element:.1f} ksi < Fcy "
+                    f"({_fcy:.0f} ksi): the compression elements cripple before "
+                    f"full plasticity. A **compression** bending fiber is checked "
+                    f"against Fcc = {_fcap:.1f} ksi (not Fcy).",
+                    icon="ℹ️",
+                )
+
+            # Per-element breakdown (element method)
+            st.markdown("**Plate elements** — element method (Needham/Boeing)")
+            _erows = []
+            for r in cr.elements:
+                e = r.element
+                _erows.append([
+                    e.name, f"{e.b:.3f}", f"{e.t:.3f}", f"{e.b_over_t:.1f}",
+                    e.edge, f"{r.fcc:.1f}", f"{r.fcc / _fcy:.2f}",
+                ])
+            html_table(
+                ["Element", "b (in)", "t (in)", "b/t", "Edge",
+                 "Fcc (ksi)", "Fcc/Fcy"], _erows,
+                col_aligns=["left", "right", "right", "right", "center",
+                            "right", "right"],
+            )
+            st.caption("Edge: **OEF** = one edge free (outstanding flange) · "
+                       "**NEF** = no edge free (web between supports). "
+                       "Fcc/Fcy = Ce·[(b/t)·√(Fcy/Ec)]^−0.75, capped at Fcy.")
+
+            # Section-level values + Gerard cross-check
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                info_card("Fcc — element method", f"{cr.fcc_element:.1f}", "ksi",
+                          sub="area-weighted section crippling")
+            with c2:
+                info_card("Fcc — weakest element", f"{cr.fcc_min:.1f}", "ksi",
+                          sub="first element to buckle")
+            with c3:
+                if cr.fcc_gerard is not None:
+                    info_card(f"Fcc — Gerard (g={cr.gerard_g})",
+                              f"{cr.fcc_gerard:.1f}", "ksi",
+                              sub="cross-check only", flag="VERIFY")
+                else:
+                    info_card("Fcc — Gerard", "—", "", sub="n/a")
+
+            st.caption(
+                "The **element method** drives the gate and the compression "
+                "allowable (spot-checkable, and conservative for the reach-Fcy "
+                "question). **Gerard** is a whole-section cross-check only — its "
+                "0.80·Fcy plateau can never reach Fcy, and it is approximate for "
+                "non-uniform thickness. Both use documented coefficients "
+                "(⚠️ VERIFY against Bruhn C7 / Niu)."
+            )
+            for _n in cr.notes:
+                st.caption("⚠️ " + _n)
+
+            with st.expander("Method & coefficients"):
+                st.markdown(
+                    "- **Element (Needham/Boeing):** "
+                    "`Fcc_i/Fcy = Ce·[(b/t)·√(Fcy/Ec)]^−0.75`, capped at Fcy; "
+                    "`Ce = 0.30` (OEF) / `0.52` (NEF). "
+                    "Section `Fcc = Σ(Fcc_i·A_i)/ΣA_i`.\n"
+                    "- **Gerard g-method:** "
+                    "`Fcc/Fcy = 0.56·[(g·t²/A)·√(Ec/Fcy)]^0.85`, capped at "
+                    "0.80·Fcy; `g` = flanges + cuts.\n"
+                    "- **Gate:** the plastic-bending credit is a whole-section "
+                    "plastic-moment credit — earned only when the compression "
+                    "elements reach Fcy before crippling. Length and end fixity "
+                    "are **not** inputs (crippling is local, not column buckling).\n"
+                    "- Coefficients are documented defaults flagged **⚠️ VERIFY** "
+                    "for reconciliation with your reference; crippling itself "
+                    "carries ~±15% scatter vs test."
+                )
 
     # ═══════════════════════════ FORMULAS ══════════════════════════════
     with tab_form:

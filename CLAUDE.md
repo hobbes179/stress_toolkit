@@ -13,7 +13,7 @@ this repository. Read it before making any changes.
 > FEM), custom polygon/DXF import, unsymmetric-bending tensor (L/Z valid
 > without the geometric-axis assumption), Bruhn midline shear flow, the §3.6
 > margin check set with the `(Ra+Rb)+Rs²=1` interaction curve, a tabbed UI
-> (Geometry | Loads | Results | Margins | Formulas | Validation) with an
+> (Geometry | Loads | Results | Margins | Crippling | Formulas | Validation) with an
 > interactive FEM stress contour, an in-app validation page, and a unified
 > **light** theme. Version is stamped in the page footer (`version.py`).
 
@@ -233,12 +233,20 @@ The removed v1 checks (σ₁ vs Fty, σ_vm vs Ftu) and rationale are in CHANGELO
 
 ### Cozzone bending allowable
 ```
-Fbu = f · Ftu
+Fbu = f · Ftu          (tension fiber only — v2.1.0 sign-aware; compression → Fcy, capped at Fcc)
 ```
 Shape factor `f` is a simplified constant per shape class (attribute
 `f_cozzone`). These are conservative values from Cozzone (1943) /
 NACA TN-1818. See `shapes.py` docstring for the full table and note on
 when a rigorous Cozzone analysis would be warranted.
+
+**Crippling gate (v2.2.0, `library/analysis/crippling.py`).** For thin-walled
+open sections the `f·Ftu` plastic-bending credit is a whole-section plastic-
+moment credit and is unlocked only when the section reaches Fcy before local
+crippling; otherwise `f = 1.0` (replaces D5's blanket gate). The compression
+bending allowable is `min(Fcy, Fcc)` where `Fcc` is the element-method section
+crippling stress. Crippling is a section+material property (needs no length/
+fixity); coefficients are ⚠️ VERIFY defaults. See CHANGELOG v2.2.0.
 
 ### Unsymmetric bending (v2 — the old geometric-axis assumption is GONE)
 Normal stress uses the full unsymmetric-bending tensor (handoff §3.1):
@@ -375,7 +383,11 @@ shear flow (old item 6, for open sections)._
     confirms every input. Mechanical but touches all 11 catalog shapes; the
     hook and the base default are already in place.
 
-10c. **Crippling check → unlocks Cozzone plastic-bending credit** (2026-07-17)
+10c. **Crippling check → unlocks Cozzone plastic-bending credit** — ✅ DONE in
+    v2.2.0 (`library/analysis/crippling.py`, Crippling tab). Kept here for the
+    rationale/history; the ⚠️ VERIFY on the element `Ce` and Gerard `β/m/g`
+    coefficients is the remaining open item (reconcile to a chosen reference).
+
     Local buckling (crippling) of the thin compression elements is the failure
     mode that currently forces `effective_f_cozzone → 1.0` for thin-walled open
     sections (decision D5, CHANGELOG v1.1.0). The v2.1.0 sign-aware bending

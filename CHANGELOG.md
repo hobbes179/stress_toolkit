@@ -33,6 +33,44 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.2.0 — local crippling + Cozzone unlock (2026-07-17)
+
+Adds local crippling (thin-element plate buckling) for thin-walled open sections
+and wires it to the Cozzone plastic-bending credit (CLAUDE.md future-work 10c,
+now implemented). New module `library/analysis/crippling.py`, new **Crippling**
+tab, `tests/test_crippling.py` (+14). Crippling needs no member length or end
+fixity — it is a section+material property.
+
+**Two methods, side by side:**
+- **Element method (Needham/Boeing, primary):** per plate element,
+  `Fcc/Fcy = Ce·[(b/t)·√(Fcy/Ec)]^-0.75` capped at Fcy, `Ce = 0.30` (OEF) /
+  `0.52` (NEF); section `Fcc = Σ(Fcc_i·A_i)/ΣA_i`. Each thin-walled open shape
+  declares its plate elements from topology (no new user input).
+- **Gerard g-method (cross-check, display-only):**
+  `Fcc/Fcy = 0.56·[(g·t²/A)·√(Ec/Fcy)]^0.85` capped at 0.80·Fcy.
+
+Coefficients are documented **defaults flagged ⚠️ VERIFY** (Bruhn C7 / Niu);
+crippling carries ~±15% scatter vs test and cannot be FEM-cross-checked (the
+solver is linear-elastic and does no buckling analysis). The gate uses the
+**element method**, not Gerard — Gerard's 0.80·Fcy plateau can never reach Fcy,
+so `min(element, Gerard)` would make the credit impossible to ever unlock.
+
+**Results impact (two effects):**
+1. **Compression bending allowable is capped at Fcc** for thin open sections.
+   Previously a compression-governed bending fiber used Fcy (v2.1.0); it is now
+   `min(Fcy, Fcc)`. For typical thin channels/I's/angles Fcc ≈ 0.4–0.5·Fcy, so
+   these compression margins **tighten (up to ~2×)** — fixing a real
+   *unconservatism* (the tool ignored that the compression flange buckles
+   locally at ~half Fcy). Applies to the interaction `Rb` term and the σ_bend
+   Results card; the general `|σ₂| vs Fcy` principal check is left as-is.
+2. **Cozzone credit unlock:** `effective_f_cozzone`'s blanket `f = 1.0` gate for
+   thin-walled open sections (decision D5) is replaced by a real check — the
+   `f·Ftu` plastic-bending credit is granted only when the section reaches Fcy
+   before crippling (stocky, low-b/t sections). Thin defaults stay locked
+   (unchanged from before); stocky sections now correctly earn `f > 1`.
+
+---
+
 ## v2.1.0 — sign-aware bending allowable (2026-07-16)
 
 Fixes a mismatched allowable on compression-governed bending. `Fbu = f·Ftu`

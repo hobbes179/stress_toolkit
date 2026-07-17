@@ -50,10 +50,11 @@ def test_interaction_old_rss_form_was_optimistic_here():
 
 def test_bending_allowable_is_sign_aware():
     # Fbu = f·Ftu is a TENSION-fiber modulus of rupture. When the governing
-    # bending fiber is in COMPRESSION it must be checked against Fcy instead,
-    # both in the interaction Rb term and in the interaction-row Allow label.
-    # A T-beam under +My puts the deep stem tip (largest |z|) into compression,
-    # so compression governs by magnitude.
+    # bending fiber is in COMPRESSION it must NOT be checked against Fbu — it
+    # uses Fcy (compression yield), capped at the local crippling stress Fcc for
+    # a thin element (a thin T-beam stem crripples below Fcy — see
+    # test_crippling). A T-beam under +My puts the deep stem tip (largest |z|)
+    # into compression, so compression governs by magnitude.
     mat = MATERIALS["6061-T6"]                 # Fcy=35 < Ftu=42
     sec = make_section("T-Beam", [4, 0.375, 4, 0.25])
 
@@ -66,11 +67,14 @@ def test_bending_allowable_is_sign_aware():
     row_t = calc_margin_table(tens, mat, sec, 1.0, 1.5, Loads(0, 0, 0, -30000, 0, 0))
     allow_c = row_c[row_c["Check"].str.contains("Combined")].iloc[0]["Allow"]
     allow_t = row_t[row_t["Check"].str.contains("Combined")].iloc[0]["Allow"]
-    assert "Fcy=35.0" in allow_c and "Fbu" not in allow_c   # compression → Fcy
+    # Compression fiber must never borrow the tension Fbu; it uses Fcy or the
+    # crippling-capped Fcc.
+    assert "Fbu" not in allow_c
+    assert ("Fcy=" in allow_c) or ("Fcc=" in allow_c)
     assert "Fbu=42.0" in allow_t                            # tension → Fbu
 
-    # Same |σ_bend| magnitude, so the compression Rb (÷Fcy) must be the larger,
-    # more-conservative ratio than the tension Rb (÷Fbu).
+    # Same |σ_bend| magnitude, so the compression Rb (÷Fcy or ÷Fcc) must be the
+    # larger, more-conservative ratio than the tension Rb (÷Fbu).
     rb_c = float(row_c[row_c["Check"].str.contains("Combined")].iloc[0]["Applied"]
                  .split("Rb=")[1].split()[0])
     rb_t = float(row_t[row_t["Check"].str.contains("Combined")].iloc[0]["Applied"]

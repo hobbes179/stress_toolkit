@@ -398,11 +398,19 @@ def calc_margin_table(
     √(τ_Vy²+τ_Vz²) + |τ_T|; Phase 2/3 replace it with the exact algebraic
     per-wall combination without changing this table's structure.
     """
+    from library.analysis.crippling import (
+        cozzone_factor, compression_bending_allowable,
+    )
+
     Fty = material.Fty or 0.0
     Ftu = material.Ftu or 0.0
     Fcy = material.Fcy or 0.0
     Fsu = material.Fsu or 0.0
-    Fbu = section.effective_f_cozzone * Ftu
+    # Crippling-aware Cozzone factor: for a thin-walled open section the f·Ftu
+    # plastic-bending credit is unlocked only when the section reaches Fcy
+    # before local crippling; otherwise f = 1.0 (CLAUDE.md 10c, crippling.py).
+    f_cozzone_eff, cr_res = cozzone_factor(section, material)
+    Fbu = f_cozzone_eff * Ftu
 
     s1_max  = df_stress["σ1"].max()
     s2_min  = df_stress["σ2"].min()
@@ -410,15 +418,18 @@ def calc_margin_table(
     tau_max = df_stress["τ_total"].max()
     # Governing bending fiber by MAGNITUDE, keeping its SIGN. Fbu = f·Ftu is a
     # tension-fiber modulus of rupture (Cozzone) and is meaningless for a
-    # compression fiber, which is governed by compression yield — so the
-    # bending allowable is chosen by the sign of the governing fiber:
-    #   tension  → Fbu (= f·Ftu, plastic-bending credit)
-    #   compression → Fcy (compression yield, no rupture credit).
+    # compression fiber — so the bending allowable is chosen by the fiber sign:
+    #   tension     → Fbu (= f·Ftu, plastic-bending credit)
+    #   compression → Fcy, capped at the local crippling stress Fcc when the
+    #                 compression element would cripple below yield.
     sb_signed = float(df_stress["σ_bend"].loc[df_stress["σ_bend"].abs().idxmax()])
     sb_max  = abs(sb_signed)
     sb_tension = sb_signed >= 0.0
-    Fb = Fbu if sb_tension else Fcy
-    Fb_label = "Fbu" if sb_tension else "Fcy"
+    if sb_tension:
+        Fb, Fb_label = Fbu, "Fbu"
+    else:
+        Fb = compression_bending_allowable(Fcy, cr_res)
+        Fb_label = "Fcc" if (cr_res is not None and Fb < Fcy - 1e-9) else "Fcy"
 
     A = section.area()
     sa = loads.P / A / 1000 if A > 0 else 0.0
