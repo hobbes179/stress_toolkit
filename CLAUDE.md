@@ -431,6 +431,26 @@ shear flow (old item 6, for open sections)._
     that *would* need length + fixity — that belongs to the separate Column
     Buckling module (long-term item 11), not here.
 
+10d. **Shear–crippling interaction** (wish list, 2026-07-17)
+    The v2.2.0 crippling row (`σ_c vs Fcc`) checks the peak **total longitudinal
+    compression** (`|min(σ_total)| = axial + bending`) against `Fcc`, and
+    correctly ignores the principal-stress rotation (crippling is buckling in
+    the beam-axis direction, so the longitudinal compression is the right
+    measure — NOT `σ₂`, which would fold shear into a pure-compression
+    allowable in the wrong frame). But it currently **omits shear's effect on
+    the buckling capacity** entirely, so a wall carrying high compression *and*
+    high shear (e.g. a web under `Vz` + `T`) is mildly unconservative. The
+    physically correct fix is a plate **buckling interaction**, not `σ₂`:
+
+        Rc + Rs² ≤ 1,   Rc = σ_comp/Fcc,   Rs = τ/F_scr
+
+    where `F_scr` is a **separate shear-buckling** allowable per element (a
+    `k_s` shear-buckling coefficient × the plate's elastic buckling stress —
+    NOT `Fsu`, NOT `Fcc`). Needs only data the module already has (each
+    element's `b/t` + edge condition) plus the `k_s` coefficient set. Deferred
+    at the owner's request (2026-07-17): not needed now, logged for a possible
+    later update.
+
 ### Long-term (new modules)
 
 Each new module follows the same pattern:
