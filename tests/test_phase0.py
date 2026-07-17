@@ -48,6 +48,36 @@ def test_interaction_old_rss_form_was_optimistic_here():
     assert interaction_ms(0.5, 0.5, 0.0) < old_rss_ms
 
 
+def test_bending_allowable_is_sign_aware():
+    # Fbu = f·Ftu is a TENSION-fiber modulus of rupture. When the governing
+    # bending fiber is in COMPRESSION it must be checked against Fcy instead,
+    # both in the interaction Rb term and in the interaction-row Allow label.
+    # A T-beam under +My puts the deep stem tip (largest |z|) into compression,
+    # so compression governs by magnitude.
+    mat = MATERIALS["6061-T6"]                 # Fcy=35 < Ftu=42
+    sec = make_section("T-Beam", [4, 0.375, 4, 0.25])
+
+    comp = calc_stress_at_points(sec, Loads(P=0, Vy=0, Vz=0, My=30000, Mz=0, T=0))
+    tens = calc_stress_at_points(sec, Loads(P=0, Vy=0, Vz=0, My=-30000, Mz=0, T=0))
+    assert comp["σ_bend"].loc[comp["σ_bend"].abs().idxmax()] < 0   # compression governs
+    assert tens["σ_bend"].loc[tens["σ_bend"].abs().idxmax()] > 0   # tension governs
+
+    row_c = calc_margin_table(comp, mat, sec, 1.0, 1.5, Loads(0, 0, 0, 30000, 0, 0))
+    row_t = calc_margin_table(tens, mat, sec, 1.0, 1.5, Loads(0, 0, 0, -30000, 0, 0))
+    allow_c = row_c[row_c["Check"].str.contains("Combined")].iloc[0]["Allow"]
+    allow_t = row_t[row_t["Check"].str.contains("Combined")].iloc[0]["Allow"]
+    assert "Fcy=35.0" in allow_c and "Fbu" not in allow_c   # compression → Fcy
+    assert "Fbu=42.0" in allow_t                            # tension → Fbu
+
+    # Same |σ_bend| magnitude, so the compression Rb (÷Fcy) must be the larger,
+    # more-conservative ratio than the tension Rb (÷Fbu).
+    rb_c = float(row_c[row_c["Check"].str.contains("Combined")].iloc[0]["Applied"]
+                 .split("Rb=")[1].split()[0])
+    rb_t = float(row_t[row_t["Check"].str.contains("Combined")].iloc[0]["Applied"]
+                 .split("Rb=")[1].split()[0])
+    assert rb_c > rb_t
+
+
 def test_interaction_ms_responds_to_sf_ult():
     # CHANGELOG.md v1.1.0 "Interaction SF" — Ra/Rb/Rs must be factored by
     # SF_ult inside calc_margin_table so raising SF_ult tightens (lowers)

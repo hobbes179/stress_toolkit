@@ -23,6 +23,8 @@ from ui.theme import THEME, ms_status
 
 from library.materials import MATERIALS, names_grouped
 from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
+from library.shapes.filleted import make_filleted
+from library.shapes.fillet import count_reentrant
 
 from apps.beam_section.calculations import (
     Loads, calc_stress_at_points, calc_margin_table, find_governing,
@@ -45,14 +47,17 @@ from apps.beam_section.plotting import (
 # ──────────────────────────────────────────────────────────────────────────
 def _section_key(section) -> tuple:
     """Hashable identity of a section for cache keys."""
+    # Fillets change the FEM geometry (and only that), so they must be part of
+    # the cache identity or two radii would collide on one cached solve.
+    fillet = getattr(section, "fillet_key", None)
     if getattr(section, "is_imported", False):
         import hashlib
         g = section.geometry()
         parts = [np.ascontiguousarray(np.round(g.outer, 9)).tobytes()]
         for v in g.voids:
             parts.append(np.ascontiguousarray(np.round(np.asarray(v), 9)).tobytes())
-        return ("imported", hashlib.md5(b"|".join(parts)).hexdigest())
-    return (section.name, tuple(section.dims))
+        return ("imported", hashlib.md5(b"|".join(parts)).hexdigest(), fillet)
+    return (section.name, tuple(section.dims), fillet)
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
@@ -146,6 +151,10 @@ def _render_validation(section, mesh_scale) -> None:
         st.info("Install the FEM backend (sectionproperties) for cross-solver "
                 "validation.")
         return
+
+    # Validate the NOMINAL (sharp) shape: this cross-check is about the solvers
+    # agreeing on the catalog geometry, not the filleted FEM variant.
+    section = getattr(section, "base", section)
 
     # ── 1. Current section: FEM vs closed-form (incl. J) ─────────────────
     from library.analysis.fem_solver import fem_properties
@@ -516,6 +525,48 @@ def render() -> None:
             mesh_scale = {"Standard (2 elem / thickness)": 1.0,
                           "Fine": 0.5, "Very fine": 0.25}[_mesh_choice]
 
+        # ── Corner fillets (re-entrant corners only) ─────────────────────
+        # Rounds the inside corners of the FEM model so the torsion stress
+        # there converges instead of being singular (Option A: FEM geometry
+        # only — the classical solver and closed-form properties are untouched).
+        # Arc density scales with the FEM mesh preset: 3 / 6 / 9 points per 90°.
+        _n_reentrant = count_reentrant(section.geometry().outer,
+                                       section.geometry().voids)
+        if _n_reentrant > 0:
+            _fil_on = st.checkbox(
+                f"Apply corner fillets  ({_n_reentrant} interior corner"
+                f"{'s' if _n_reentrant != 1 else ''})",
+                value=False,
+                help="Rounds the re-entrant (inside) corners of the FEM model "
+                     "at a single radius so the corner stress converges. "
+                     "Exterior corners and the classical/closed-form results "
+                     "are left unchanged.",
+            )
+            if _fil_on:
+                _fil_r = st.number_input(
+                    "Fillet radius (in)", value=0.125,
+                    min_value=1e-4, step=0.03125, format="%.4f",
+                    help="Applied to every re-entrant corner. If it is too "
+                         "large to fit on a corner's adjacent edges, that "
+                         "corner is left sharp and reported.",
+                )
+                _seg_per_90 = {1.0: 3, 0.5: 6, 0.25: 9}.get(mesh_scale, 3)
+                section = make_filleted(section, _fil_r, _seg_per_90)
+                rep = getattr(section, "report", None)
+                if rep is not None:
+                    if rep.n_filleted:
+                        st.caption(
+                            f"Filleted {rep.n_filleted} corner"
+                            f"{'s' if rep.n_filleted != 1 else ''} "
+                            f"at r = {_fil_r:.4g} in "
+                            f"({_seg_per_90} arc pts / 90°).")
+                    if rep.any_skipped:
+                        st.warning(
+                            f"Radius r = {_fil_r:.4g} in is too large for "
+                            f"{rep.n_skipped} corner"
+                            f"{'s' if rep.n_skipped != 1 else ''} — left sharp. "
+                            "Reduce the radius to round them.")
+
         # Defaults: a channel under genuine combined loading (axial + vertical
         # shear + biaxial bending + torsion) so the tool opens on a full
         # demonstration — governing margin lands ~0.22 (approaching concern),
@@ -677,7 +728,18 @@ def render() -> None:
     _min_ms, _gov_check, _gov_loc = governing_summary(df_stress, df_ms)
     governing_banner(_min_ms, _gov_check, _gov_loc, solver_name)
 
-    if solver_choice == "FEM":
+    if solver_choice == "FEM" and getattr(section, "is_filleted", False):
+        st.info(
+            f"**Re-entrant corners are filleted at r = {section.radius:.4g} in** "
+            f"({section.report.n_filleted} corner"
+            f"{'s' if section.report.n_filleted != 1 else ''}), so the FEM "
+            "corner stress is **finite and converges** with mesh refinement "
+            "rather than being singular. FEM still captures the (now bounded) "
+            "concentration the classical nominal-stress method omits, which is "
+            "why FEM can read higher than Classical near junctions.",
+            icon="✅",
+        )
+    elif solver_choice == "FEM":
         st.warning(
             "**FEM captures stress concentrations at sharp re-entrant corners** "
             "(web–flange junctions, void corners) that the classical "
@@ -685,9 +747,9 @@ def render() -> None:
             "Classical near junctions. At a perfectly sharp inside corner the "
             "torsion stress is theoretically **singular**, so the FEM peak there "
             "**grows as the mesh refines** (try the mesh selector) and is *not* a "
-            "converged design value — model a fillet radius for real corner "
-            "stresses. Away from corners the two solvers agree (see the "
-            "Validation tab).",
+            "converged design value — enable **corner fillets** (sidebar) or "
+            "model a fillet radius for real corner stresses. Away from corners "
+            "the two solvers agree (see the Validation tab).",
             icon="⚠️",
         )
 
@@ -811,13 +873,19 @@ def render() -> None:
                        desc="extreme-fiber results across the section")
         # Order tracks find_governing() (σ1, σ2, σ_vm, τ_total, σ_bend); each
         # paired with the allowable its §3.6 check uses (σ1↔Ftu, σ2↔Fcy,
-        # σ_vm↔Fty, τ↔Fsu; σ_bend↔Fbu for display continuity only).
+        # σ_vm↔Fty, τ↔Fsu). The bending card is sign-aware: Fbu = f·Ftu is a
+        # tension-fiber modulus of rupture, so a COMPRESSION-governed bending
+        # fiber is shown against Fcy (compression yield) instead — see the
+        # sign-aware Fb in calc_margin_table.
+        _sb_tension = govs[4].value >= 0.0
+        _fb_pair = ((fbu, "Fbu", sf_ult) if _sb_tension
+                    else (material.Fcy or 0.0, "Fcy", sf_yield))
         stress_allowables = [
             (material.Ftu or 0.0, "Ftu", sf_ult),
             (material.Fcy or 0.0, "Fcy", sf_yield),
             (material.Fty or 0.0, "Fty", sf_yield),
             (material.Fsu or 0.0, "Fsu", sf_ult),
-            (fbu,                 "Fbu", sf_ult),
+            _fb_pair,
         ]
         combined_ms_rows = df_ms[df_ms["Check"].str.contains(
             "Combined interaction", na=False)]
@@ -840,6 +908,14 @@ def render() -> None:
             # field — so FEM is used purely as the field visualizer. The table
             # and margins still use the selected solver.
             if solver_choice != "FEM":
+                _corner_note = (
+                    f"the re-entrant corners are filleted at "
+                    f"r = {section.radius:.4g} in, so the FEM field there is "
+                    f"finite and converged."
+                    if getattr(section, "is_filleted", False) else
+                    "at a sharp inside corner the FEM field can read higher "
+                    "(mesh-dependent — enable corner fillets or model a fillet "
+                    "for real corner stress).")
                 st.info(
                     f"**The contour below is an FEM field** "
                     f"(sectionproperties), shown only to visualize the 2-D "
@@ -848,9 +924,7 @@ def render() -> None:
                     f"field. Your **results table and margins use "
                     f"{solver_name}** (no finite elements). Away from sharp "
                     f"re-entrant corners the FEM field and the classical values "
-                    f"agree; at a sharp inside corner the FEM field can read "
-                    f"higher (mesh-dependent — model a fillet for real corner "
-                    f"stress).",
+                    f"agree; {_corner_note}",
                     icon="ℹ️",
                 )
             from apps.beam_section.plotting_interactive import (

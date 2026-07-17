@@ -222,8 +222,12 @@ MS = Allowable / (SF · Applied) − 1        SF_yield default 1.0, SF_ult 1.5
 4. τ_wall vs Fsu (shear ultimate)
 5. Combined interaction, curve `(Ra+Rb) + Rs² = 1` (Bruhn C4-family):
    `MS = 2/[(Ra+Rb) + √((Ra+Rb)² + 4·Rs²)] − 1`, with SF_ult baked into
-   Ra = |σ_axial|/Fa, Rb = |σ_bend|/Fbu, Rs = τ_wall/Fsu. Replaces the v1
+   Ra = |σ_axial|/Fa, Rb = |σ_bend|/Fb, Rs = τ_wall/Fsu. Replaces the v1
    RSS-style `1/√(Rc²+Rb²+Rs²) − 1`, which was unconservative (CHANGELOG).
+   Both **Fa and Fb are sign-aware**: Fa = Ftu (tension) or Fcy (compression)
+   by the sign of σ_axial; Fb = Fbu=f·Ftu when the governing bending fiber is
+   tension, else Fcy (Fbu is a tension-fiber modulus of rupture — see
+   CHANGELOG v2.1.0 "sign-aware bending allowable").
 
 The removed v1 checks (σ₁ vs Fty, σ_vm vs Ftu) and rationale are in CHANGELOG.
 
@@ -293,7 +297,7 @@ open-section shear (Bruhn midline shear flow replaces v1's max-Q-everywhere).
 |-------|----------|----------|-------|
 | Warping torsion (stress) | Medium | `shapes.py`, `calculations.py`, FEM | St-Venant torsion for open sections; warping **normal** stresses (σ_w) are not computed. The UI runs a warping *screen* (L/λ) but does not add σ_w. For short open members with restrained ends this can underestimate stress — engineering judgment required. |
 | Solid/tube per-point shear | Low | `calculations.py` | Solids and closed tubes use VQ/It with the neutral-axis Q at all key points (conservative). Open sections use per-point Bruhn midline flow; the FEM solver is exact per-point for any shape. |
-| FEM corner singularity | Info | `plotting_interactive.py`, docs | At a perfectly sharp re-entrant corner the FEM torsion stress is singular and grows with mesh refinement — documented, warned in-app, not a converged design value (model a fillet). See CHANGELOG "FEM vs Classical at sharp corners". |
+| FEM corner singularity | Info | `filleted.py`, `plotting_interactive.py`, docs | At a perfectly sharp re-entrant corner the FEM torsion stress is singular and grows with mesh refinement. **Resolved (opt-in) in v2.1.0:** the sidebar "Apply corner fillets" toggle wraps the section in `FilletedSection` (rounds only the FEM geometry, per Option A — closed-form/classical results unchanged), giving a finite, converged corner value. Left sharp by default; warned in-app. See CHANGELOG v2.1.0 + "FEM vs Classical at sharp corners". |
 | Z-beam key-point coordinates | Low | `shapes.py ZBeam.key_points()` | Top flange right tip coordinate has a tautological expression. Review when Z-beam is tested with combined Mz loading. |
 | Triangulation warnings | Info | `plotting.py` | matplotlib prints "Ignoring fixed axis limits" when `set_aspect("equal")` conflicts with explicit xlim/ylim. Cosmetic only. |
 | Per-member dimension leaders | Low | `shapes.py`, `plotting.py` | `dimension_annotations()` draws overall bbox W×H only; per-member (tf/tw) callouts are wish-list item 10b. |
@@ -370,6 +374,41 @@ shear flow (old item 6, for open sections)._
     labeled leader line, so the diagram becomes a full dimensioned drawing that
     confirms every input. Mechanical but touches all 11 catalog shapes; the
     hook and the base default are already in place.
+
+10c. **Crippling check → unlocks Cozzone plastic-bending credit** (2026-07-17)
+    Local buckling (crippling) of the thin compression elements is the failure
+    mode that currently forces `effective_f_cozzone → 1.0` for thin-walled open
+    sections (decision D5, CHANGELOG v1.1.0). The v2.1.0 sign-aware bending
+    allowable (Fbu only on the tension fiber) does **not** remove this gate:
+    `f·Ftu` is a whole-section *plastic-moment* credit bookkept on the tension
+    fiber, and it is only earned if the compression elements survive to let the
+    section plasticize — crippling on the compression side caps the moment and
+    the tension credit with it. See CHANGELOG v2.1.0 discussion.
+
+    **Stays entirely within the cross-section framework — no length or fixity.**
+    Crippling is short-wavelength *local* plate buckling, a section+material
+    property, unlike column (Euler/Johnson) or lateral-torsional buckling. The
+    standard methods (Gerard, Needham, Niu/Bruhn) give the crippling allowable
+    Fcc from:
+      • each element's **b/t** — already derivable from the section dims;
+      • each element's **edge condition** (one-edge-free outstanding flange vs
+        no-edge-free web-between-supports) — known from the shape topology, so
+        each shape class can declare its elements;
+      • material **Fcy** and **E** — already in the material library.
+    Optional refinement inputs only: construction type (extruded/machined vs
+    formed sheet with a bend radius) selecting the Gerard coefficient set, and
+    (for a rigorous cutoff) the compression Ramberg-Osgood `n`. None of these is
+    length or end-fixity. So the module needs essentially **no new user inputs**
+    beyond what the beam-section module already has.
+
+    Consequently the Cozzone "unlock" can happen **inside this module** with no
+    cross-module model-data sharing: compute Fcc for the compression elements,
+    grant `f > 1` only when they are non-critical, and cap the compression
+    bending allowable at Fcc (tightening the `|σ₂| vs Fcy` / interaction-Fb
+    side, which today uses Fcy and is itself optimistic for slender elements).
+    Column-crippling interaction (Fcc as the Euler/Johnson cutoff) is the part
+    that *would* need length + fixity — that belongs to the separate Column
+    Buckling module (long-term item 11), not here.
 
 ### Long-term (new modules)
 

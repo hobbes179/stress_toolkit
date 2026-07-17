@@ -186,12 +186,30 @@ def interactive_stress_contour(
         "min MS = %{customdata[5]:.2f}<extra></extra>"
     )
 
+    # The stress fields use the classic Jet ramp (blue low → red high). The
+    # MIN MS field is inverted in meaning — LOW margin is the concern — so it
+    # gets a REVERSED ramp (red = low margin, blue = safe) and its top is
+    # CAPPED at MS = 2.0 so one comfortably-high-margin (or infinite) point
+    # never washes out the low-margin detail: everything ≥ 2.0 reads solid blue.
+    heat_kwargs: dict = {}
+    cbar_title = field_key
+    if fkey == "ms":
+        MS_CAP = 2.0
+        disp = np.minimum(disp, MS_CAP)                # ≥ 2.0 → solid blue
+        finite = disp[np.isfinite(disp)]
+        zmin = float(np.min(finite)) if finite.size else 0.0
+        if zmin >= MS_CAP:                             # whole section is safe
+            zmin = 0.0
+        heat_kwargs = dict(zmin=zmin, zmax=MS_CAP, reversescale=True)
+        cbar_title = "min MS (≥2.0)"
+
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
         x=ys, y=zs, z=disp, customdata=customdata,
         colorscale="Jet", connectgaps=False,   # classic blue→green→red stress plot
         hovertemplate=hover,
-        colorbar=dict(title=field_key),
+        colorbar=dict(title=cbar_title),
+        **heat_kwargs,
     ))
 
     # Optional FEM mesh-line overlay (drawn under the outline/markers).

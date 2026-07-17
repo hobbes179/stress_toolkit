@@ -408,7 +408,17 @@ def calc_margin_table(
     s2_min  = df_stress["σ2"].min()
     svm_max = df_stress["σ_vm"].max()
     tau_max = df_stress["τ_total"].max()
-    sb_max  = df_stress["σ_bend"].abs().max()
+    # Governing bending fiber by MAGNITUDE, keeping its SIGN. Fbu = f·Ftu is a
+    # tension-fiber modulus of rupture (Cozzone) and is meaningless for a
+    # compression fiber, which is governed by compression yield — so the
+    # bending allowable is chosen by the sign of the governing fiber:
+    #   tension  → Fbu (= f·Ftu, plastic-bending credit)
+    #   compression → Fcy (compression yield, no rupture credit).
+    sb_signed = float(df_stress["σ_bend"].loc[df_stress["σ_bend"].abs().idxmax()])
+    sb_max  = abs(sb_signed)
+    sb_tension = sb_signed >= 0.0
+    Fb = Fbu if sb_tension else Fcy
+    Fb_label = "Fbu" if sb_tension else "Fcy"
 
     A = section.area()
     sa = loads.P / A / 1000 if A > 0 else 0.0
@@ -428,7 +438,7 @@ def calc_margin_table(
     # other row, and MS=0 lands exactly at SF_ult·applied = allowable.
     Fa = Ftu if sa >= 0 else Fcy
     Ra = sf_ult * sa_abs / Fa if Fa > 0 else 0.0
-    Rb = sf_ult * sb_max / Fbu if Fbu > 0 else 0.0
+    Rb = sf_ult * sb_max / Fb if Fb > 0 else 0.0    # Fb is sign-aware (see above)
     Rs = sf_ult * tau_max / Fsu if Fsu > 0 else 0.0
     ms_int = interaction_ms(Ra, Rb, Rs)
 
@@ -450,7 +460,7 @@ def calc_margin_table(
          "MS": _safe_ms(Fsu, sf_ult, tau_max)},
 
         {"Check": "Combined interaction (Ra+Rb)+Rs²=1",
-         "Allow": f"Fa={Fa:.1f}  Fbu={Fbu:.1f}  Fsu={Fsu:.1f}",
+         "Allow": f"Fa={Fa:.1f}  {Fb_label}={Fb:.1f}  Fsu={Fsu:.1f}",
          "SF": sf_ult,
          "Applied": f"Ra={Ra:.3f}  Rb={Rb:.3f}  Rs={Rs:.3f}",
          "MS": ms_int},

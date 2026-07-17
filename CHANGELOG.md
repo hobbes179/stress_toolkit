@@ -28,9 +28,79 @@ The §7.2 cross-solver agreement suite deliberately samples wall **midpoints**
 tolerances. Per the project owner's decision, the app keeps the raw FEM peaks
 (they are the true corner concentration for the geometry as drawn) and shows
 a header warning when FEM is selected: the peak at a sharp junction is
-mesh-dependent and not a converged design value — model a fillet radius for
-real corner stresses. (A fillet-on-import option remains available as future
-work if convergent corner values are wanted.)
+mesh-dependent and not a converged design value — enable **corner fillets**
+(below) or model a fillet radius for real corner stresses.
+
+---
+
+## v2.1.0 — sign-aware bending allowable (2026-07-16)
+
+Fixes a mismatched allowable on compression-governed bending. `Fbu = f·Ftu`
+is the **Cozzone tension-fiber modulus of rupture** — the shape factor `f`
+credits the extreme *tension* fiber redistributing plastically toward Ftu. It
+has no meaning for a compression fiber, which is governed by compression yield
+(or, in thin sections, local buckling/crippling).
+
+Previously the combined-interaction `Rb` term used `|σ_bend|_max / Fbu`
+regardless of the governing fiber's sign, and the Results "σ_bend" card always
+paired against Fbu. When the compression fiber governed by magnitude (asymmetric
+sections — T, L — or a large compressive P), this normalized a *compressive*
+stress by a *tension* allowable → **unconservative** (for 6061, Fcy 35 < Ftu 42,
+so `Rb` was ~20% low) and visually a category error.
+
+Now the bending allowable is **sign-aware**:
+
+- governing bending fiber in **tension** → `Fbu = f·Ftu` (plastic-bending credit);
+- governing bending fiber in **compression** → `Fcy` (compression yield, no
+  rupture credit) — consistent with the tool already zeroing the Cozzone credit
+  where it is unsubstantiated.
+
+Applied to both the interaction `Rb` term (`calc_margin_table`) and the Results
+governing-stress card, and reflected in the interaction row's Allow label
+(`Fbu=…` vs `Fcy=…`). The compression fiber was *already* independently checked
+by `|σ₂| vs Fcy` and `σ_vm vs Fty`, so this tightens the combined check and the
+display without opening any previously-covered gap. Locked by
+`test_bending_allowable_is_sign_aware`.
+
+---
+
+## v2.1.0 — corner fillets (2026-07-16)
+
+Adds an optional **re-entrant corner fillet** to the FEM geometry, so the
+sharp-corner torsion singularity above becomes a finite, converged value.
+
+- **Scope — Option A (FEM geometry only).** A `FilletedSection` wrapper
+  (`library/shapes/filleted.py`) rounds the section's `outer`/`voids` loops at
+  a single user radius and hands the rounded polygon to the FEM solver, while
+  delegating **every closed-form property and the midline skeleton to the
+  sharp base**. The classical midline / VQ-It results are therefore **byte-
+  identical** with fillets on or off (locked by
+  `test_classical_stress_is_invariant_to_fillets`); only the FEM stress field,
+  mesh, and FEM properties see the rounded corners.
+- **Re-entrant only.** Detection is orientation-based: with material on the
+  left of every loop (CCW outer / CW voids), a right turn (signed cross < 0)
+  that also deflects ≥ 30° is a re-entrant corner — valid at any corner angle,
+  not just 90°, and it rejects the tiny reflex vertices of a faceted curve
+  (a tube's inner circle reports zero). Convex/exterior corners are never
+  rounded. Works for catalog shapes **and** sharp-cornered custom imports.
+- **Exact geometry.** A 90° fillet of radius r adds exactly r²(1−π/4) of
+  material per corner; the arc is tangent to both edges at setback
+  t = r·tan(δ/2) with its centre on the notch side.
+- **Fit / skip policy.** If the radius is too large to fit on a corner's
+  adjacent edges (including a neighbouring fillet's setback), that corner is
+  **left sharp and reported** — the output polygon is never self-intersecting.
+  (Channel example: both corners share the 5.25 in web face, so r ≳ 2.62 in
+  leaves them sharp.)
+- **Mesh density.** Arc tessellation scales with the FEM mesh preset —
+  **3 / 6 / 9 points per 90°** for Standard / Fine / Very fine. The dense
+  fillet boundary makes Triangle refine locally and coarsen away from the
+  corner, giving local refinement without globally shrinking the element size.
+- **UI.** A sidebar "Apply corner fillets" toggle + radius input appears
+  whenever the section has ≥1 interior corner; it reports how many corners
+  were rounded vs left sharp, and the FEM corner-singularity warning flips to
+  a converged-value note. The section diagram and FEM contour both draw the
+  rounded corners; the Validation cross-check still uses the nominal sharp
+  shape.
 
 ---
 
