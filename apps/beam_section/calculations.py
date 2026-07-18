@@ -393,11 +393,14 @@ def calc_margin_table(
          (÷Fbu) and compression-fiber (÷Fcy) bending ratios. This is a STRENGTH
          interaction — crippling is checked separately (below).
       7. σ_c vs Fcc — local CRIPPLING (stability), thin-walled open sections
-         only. Peak TOTAL compressive normal stress (axial + bending) vs the
-         section crippling stress Fcc (v2.2.0). Uses σ_total, so pure axial
-         compression and combined axial+bending both count — bending alone
-         would miss a compression member. Omitted where no plate-element
-         decomposition exists (solids, closed tubes, imports).
+         only. Element-wise (v2.2.1): each plate element's own peak compressive
+         normal stress (axial + bending) vs that element's OWN crippling stress
+         Fcc_i, worst element governing. Uses σ_total, so pure axial compression
+         and combined axial+bending both count — bending alone would miss a
+         compression member. Replaces the v2.2.0 area-weighted-vs-peak form,
+         which was unconservative under bending (a stocky web masked a slender
+         compression flange). Omitted where no plate-element decomposition
+         exists (solids, closed tubes, imports).
 
     Removed checks (see CHANGELOG.md for rationale): "σ₁ vs Fty" (max-
     normal-stress yield criterion — unconservative vs distortion energy
@@ -412,6 +415,7 @@ def calc_margin_table(
     """
     from library.analysis.crippling import (
         crippling_summary, compression_bending_allowable,
+        worst_element_crippling,
     )
 
     Fty = material.Fty or 0.0
@@ -444,19 +448,42 @@ def calc_margin_table(
     else:                                        # tension fiber governs
         sb_max, Fb, Fb_label = sb_tension_max, Fbu, "Fbu"
 
-    # Local crippling (stability): the peak TOTAL compressive normal stress
-    # (axial + bending) vs the section crippling stress Fcc. Uses σ_total, NOT
-    # σ_bend — crippling is driven by the whole compressive stress, so pure
-    # axial compression and combined axial+bending are both captured (bending-
-    # only would miss a compression member entirely). Only meaningful where a
-    # plate-element decomposition exists (thin-walled open catalog shapes).
-    sc_comp = abs(min(float(df_stress["σ_total"].min()), 0.0))
-    Fcc_allow = compression_bending_allowable(Fcy, cr_res)   # min(Fcy, Fcc)
-    Fcc_label = "Fcc" if (cr_res is not None and Fcc_allow < Fcy - 1e-9) else "Fcy"
-
     A = section.area()
     sa = loads.P / A / 1000 if A > 0 else 0.0
     sa_abs = abs(sa)
+
+    # Local crippling (stability), element-wise (v2.2.1). Each plate element's
+    # own peak compressive normal stress (axial + bending) is checked against
+    # that element's OWN crippling stress Fcc_i, and the worst element by ratio
+    # governs. Uses σ_total (axial + bending), so pure axial compression and
+    # combined axial+bending are both captured — bending-only would miss a
+    # compression member entirely. The applied field is the affine (classical)
+    # normal stress σ(y,z) = σ_axial + (c_z·z + c_y·y)/1000 — exact for the
+    # bending + axial normal stress, so this is solver-agnostic. Only meaningful
+    # where a plate-element decomposition exists (thin-walled open catalog
+    # shapes); cr_res is None otherwise (solids, closed tubes, imports).
+    Iy_c, Iz_c, Iyz_c = section.Iy(), section.Iz(), section.Iyz()
+    Delta_c = Iy_c * Iz_c - Iyz_c**2
+    if Delta_c > 0:
+        cz_c = (loads.My * Iz_c - loads.Mz * Iyz_c) / Delta_c
+        cy_c = (loads.Mz * Iy_c - loads.My * Iyz_c) / Delta_c
+    else:
+        cz_c = cy_c = 0.0
+
+    def _sigma_at(y: float, z: float) -> float:
+        return sa + (cz_c * z + cy_c * y) / 1000.0
+
+    ew = worst_element_crippling(cr_res, _sigma_at)
+    if ew is not None:
+        sc_comp, Fcc_allow, cr_elem, _cr_pt = ew
+        Fcc_label = "Fcc" if Fcc_allow < Fcy - 1e-9 else "Fcy"
+    else:
+        # No element in compression (nothing to cripple) or no decomposition —
+        # report a trivially passing row against the section allowable.
+        sc_comp = 0.0
+        Fcc_allow = compression_bending_allowable(Fcy, cr_res)   # min(Fcy, Fcc)
+        Fcc_label = "Fcc" if (cr_res is not None and Fcc_allow < Fcy - 1e-9) else "Fcy"
+        cr_elem = None
 
     # Applied values for checks 2/3 are only "active" on their governing
     # sign; otherwise floored to ~0 by _safe_ms so the check trivially
@@ -514,8 +541,9 @@ def calc_margin_table(
     # element decomposition exists (thin-walled open catalog shapes). Inserted
     # before the interaction row so the strength interaction stays last.
     if cr_res is not None:
+        where = cr_elem if cr_elem is not None else "axial+bending"
         rows.insert(-1, {
-            "Check": f"σ_c vs {Fcc_label} (crippling, axial+bending)",
+            "Check": f"σ_c vs {Fcc_label} (crippling, {where})",
             "Allow": Fcc_allow, "SF": sf_ult, "Applied": sc_comp,
             "MS": _safe_ms(Fcc_allow, sf_ult, sc_comp)})
 

@@ -240,22 +240,31 @@ Shape factor `f` is a simplified constant per shape class (attribute
 NACA TN-1818. See `shapes.py` docstring for the full table and note on
 when a rigorous Cozzone analysis would be warranted.
 
-**Crippling (v2.2.0, `library/analysis/crippling.py`).** Local crippling is a
+**Crippling (v2.2.1, `library/analysis/crippling.py`).** Local crippling is a
 **standalone stability check** — the `σ_c vs Fcc` margin row (thin-walled open
-sections only). Applied stress = the peak **total** compressive normal stress
-`|min(σ_total)| = axial + bending`, so pure axial compression (a strut) and
-combined axial+bending both count — bending alone would miss a compression
-member. `Fcc` = element-method section crippling stress (`min(Fcy, Fcc)`). It is
-kept OUT of the `(Ra+Rb)+Rs²` strength interaction (that would double-count /
-mishandle axial); the interaction's compression bending uses `Fcy`. The tension
-fiber keeps the shape's plastic factor (`Fbu = f·Ftu`, the `σ_bend,t` row). The
-old **D5 tension-side gate** (forced `f = 1.0` for thin-walled open) is
-**removed** — it was a proxy for the missing crippling check, so
-`effective_f_cozzone == f_cozzone` for every shape now. Crippling is a
-section+material property (no length/fixity); coefficients are ⚠️ VERIFY
-defaults. Custom/imported shapes have no plate-element decomposition, so they
-get **no crippling row** (compression falls back to Fcy) — a known gap. See
-CHANGELOG v2.2.0.
+sections only), **element-wise**: each thin plate element's own peak compressive
+normal stress (axial + bending, from the affine section field `σ(y,z)`) is
+checked against **that element's own** crippling stress `Fcc_i`, and the worst
+element by ratio governs (`worst_element_crippling`). Uses total (axial +
+bending) compression, so pure axial compression (a strut) and combined
+axial+bending both count — bending alone would miss a compression member.
+
+The v2.2.1 fix (see CHANGELOG): the v2.2.0 row compared the section's peak
+compression against the **area-weighted** section `Fcc` (`fcc_element`), which
+is valid only for uniform/strut compression and is **unconservative under
+bending** — a stocky web inflates the average and masks a slender extreme-fiber
+flange. The area-weighted `fcc_element` is retained for the strut interpretation
+and the Crippling-tab display; `crippling_limited` keys off the weakest element
+(`fcc_min < Fcy`). Crippling is kept OUT of the `(Ra+Rb)+Rs²` strength
+interaction (that would double-count / mishandle axial); the interaction's
+compression bending uses `Fcy`. The tension fiber keeps the shape's plastic
+factor (`Fbu = f·Ftu`, the `σ_bend,t` row). The old **D5 tension-side gate**
+(forced `f = 1.0` for thin-walled open) is **removed** — it was a proxy for the
+missing crippling check, so `effective_f_cozzone == f_cozzone` for every shape
+now. Crippling is a section+material property (no length/fixity); coefficients
+are ⚠️ VERIFY defaults. Custom/imported shapes have no plate-element
+decomposition, so they get **no crippling row** (compression falls back to Fcy)
+— a known gap. See CHANGELOG v2.2.0 / v2.2.1.
 
 ### Unsymmetric bending (v2 — the old geometric-axis assumption is GONE)
 Normal stress uses the full unsymmetric-bending tensor (handoff §3.1):
@@ -396,6 +405,15 @@ shear flow (old item 6, for open sections)._
     v2.2.0 (`library/analysis/crippling.py`, Crippling tab). Kept here for the
     rationale/history; the ⚠️ VERIFY on the element `Ce` and Gerard `β/m/g`
     coefficients is the remaining open item (reconcile to a chosen reference).
+
+    > **As built differs from the plan below.** The D5 tension gate was
+    > **removed outright** (not conditionally "unlocked when non-critical" as
+    > the original plan text below reads): the tension fiber always keeps
+    > `Fbu = f·Ftu`, and crippling is a **separate, element-wise** stability
+    > row (`σ_c vs Fcc`, v2.2.1) on total compression — not a cap folded into
+    > the bending allowable. The exploratory paragraphs below are retained only
+    > as the original motivation; the authoritative description is the
+    > "Crippling (v2.2.1)" methodology section above and CHANGELOG v2.2.0/v2.2.1.
 
     Local buckling (crippling) of the thin compression elements is the failure
     mode that currently forces `effective_f_cozzone → 1.0` for thin-walled open

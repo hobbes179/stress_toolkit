@@ -33,6 +33,48 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.2.1 — element-wise crippling (fixes unconservative section-average) (2026-07-17)
+
+**Results-changing.** The `σ_c vs Fcc` crippling row is now **element-wise**:
+each thin plate element's own peak compressive normal stress (axial + bending)
+is checked against **that element's own** crippling stress `Fcc_i`, and the
+worst element by ratio governs the row. This replaces the v2.2.0 form, which
+compared the section's peak compression against the **area-weighted** section
+`Fcc` (`fcc_element`).
+
+**Why (the defect).** The area-weighted average is only valid for *uniform*
+(strut) compression, where post-buckling redistribution lets stocky elements
+carry the load after slender ones buckle. Under **bending** it is
+**unconservative**: a stocky interior element (e.g. a thick web) inflates the
+average and masks a slender extreme-fiber flange that is actually past its own
+crippling stress. Worked case that flipped sign — I-beam `[6, 6, 0.08, 0.5]`
+(thin 0.08″ flange, thick 0.50″ web), 2024, `My = 60000 lb·in`:
+
+| quantity | v2.2.0 (area-weighted) | v2.2.1 (element-wise) |
+|---|---|---|
+| allowable `Fcc` | 22.3 ksi (section avg) | **6.9 ksi** (flange element) |
+| applied compression | 10.6 ksi | 10.6 ksi |
+| **crippling MS** | **+0.40 (looks safe)** | **−0.57 (fails)** |
+
+The reported flange was carrying the peak bending compression at ~1.5× its own
+crippling stress, but the web-inflated average hid it. (Surfaced by an
+independent margin-calculation review; confirmed numerically.)
+
+**Mechanics.** Each catalog plate element now carries its two centroidal
+midline endpoints (read from the section skeleton `geometry().nodes/segments`);
+`worst_element_crippling()` evaluates the affine section normal-stress field
+`σ(y,z) = σ_axial + (c_z·z + c_y·y)/1000` at those fibers, takes the most
+compressive per element, and returns the worst element by `applied/Fcc_i`. The
+field is exact for the bending + axial normal stress, so the check is
+solver-agnostic (classical or FEM). The area-weighted `fcc_element` is
+**retained** for the uniform-compression (strut) interpretation and the
+Crippling-tab display; `crippling_limited` now keys off the **weakest** element
+(`fcc_min < Fcy`), consistent with the row. The Crippling-tab verdict text and
+per-element table were updated to match. No new user inputs; coefficients
+unchanged (still ⚠️ VERIFY). `pytest` 201 passing.
+
+---
+
 ## v2.2.0 — local crippling + Cozzone unlock (2026-07-17)
 
 Adds local crippling (thin-element plate buckling) for thin-walled open sections

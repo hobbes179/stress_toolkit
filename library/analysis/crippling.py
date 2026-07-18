@@ -29,16 +29,21 @@ DEFAULTS flagged ⚠️ VERIFY for reconciliation against the user's reference
 (Bruhn C7 / Niu). Crippling cannot be cross-checked against the linear-elastic
 FEM solver (it does no buckling analysis), so its reference is published curves.
 
-How crippling enters the margins (v2.2.0 — no tension-side gate): the
-compression bending fiber is checked directly against Fcy capped at the section
-crippling stress Fcc (`compression_bending_allowable`), which is the load-
-dependent `σ_bend,c vs Fcc` margin row. A crippling-sensitive section therefore
-shows up as that row governing and going negative. The tension bending fiber
-keeps the shape's plastic factor (Fbu = f·Ftu) — the old blanket "f → 1.0 for
-thin-walled open sections" gate (decision D5) was a proxy for "we don't check
-crippling," and is removed now that we check it directly on the compression
-side. The gate/allowable use the ELEMENT method, not Gerard, whose empirical
-0.80·Fcy plateau is a displayed cross-check only.
+How crippling enters the margins (v2.2.1 — element-wise, no tension-side gate):
+the `σ_c vs Fcc` row checks each plate element's own peak compressive normal
+stress (axial + bending, from the affine section field) against that element's
+OWN crippling stress Fcc_i, and reports the worst element by ratio
+(`worst_element_crippling`). This replaced the v2.2.0 area-weighted
+`fcc_element`-vs-peak check, which was unconservative under bending (a stocky
+web inflated the section-average Fcc and masked a slender compression flange).
+The area-weighted `fcc_element` is retained for the uniform-compression (strut)
+interpretation and the Crippling-tab display (`compression_bending_allowable`).
+A crippling-sensitive section shows up as the `σ_c vs Fcc` row governing and
+going negative. The tension bending fiber keeps the shape's plastic factor
+(Fbu = f·Ftu) — the old blanket "f → 1.0 for thin-walled open sections" gate
+(decision D5) was a proxy for "we don't check crippling," and is removed now
+that we check it directly. All of this uses the ELEMENT method, not Gerard,
+whose empirical 0.80·Fcy plateau is a displayed cross-check only.
 """
 from __future__ import annotations
 
@@ -63,6 +68,10 @@ class PlateElement:
     b: float                 # flat width (in)
     t: float                 # thickness (in)
     edge: EdgeCondition      # "OEF" (one edge free) or "NEF" (no edge free)
+    fibers: tuple = ()       # centroidal midline endpoints ((y,z), (y,z)) where
+                             # this element's peak compression is evaluated for
+                             # the element-wise crippling check (empty for
+                             # manually built element lists)
 
     @property
     def area(self) -> float:
@@ -99,11 +108,13 @@ class CripplingResult:
 
     @property
     def crippling_limited(self) -> bool:
-        """True when local crippling caps the section below yield (Fcc < Fcy),
-        i.e. the compression bending allowable is reduced from Fcy to Fcc. Uses
-        the ELEMENT method — Gerard's 0.80·Fcy plateau is a display-only cross-
-        check (see crippling_summary)."""
-        return self.fcc_governing < self.Fcy - 1e-9
+        """True when local crippling can cap the compression fiber below yield,
+        i.e. ANY plate element crripples below Fcy (`fcc_min < Fcy`). Uses the
+        weakest ELEMENT, consistent with the element-wise `σ_c vs Fcc` margin row
+        (`worst_element_crippling`) — a slender flange makes the section
+        crippling-limited even if the area-weighted section Fcc stays at Fcy.
+        Gerard's 0.80·Fcy plateau is a display-only cross-check."""
+        return self.fcc_min < self.Fcy - 1e-9
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -160,6 +171,12 @@ def _elements_for(section) -> Optional[list]:
     Returns None for shapes crippling does not apply to (solids, closed tubes,
     imports). Flat widths subtract the supporting member's thickness; each
     outstanding element is "OEF" (free at its tip), each captured element "NEF".
+
+    Each element also carries its two midline endpoints (centroidal (y,z)),
+    read from the section's midline skeleton, so the element-wise crippling
+    check (`worst_element_crippling`) can evaluate the compression on that
+    element's extreme fiber. The skeleton segments correspond 1:1 to the
+    elements below (per-shape index maps given inline).
     """
     name = getattr(section, "name", "")
     # Imported / custom polygons have no catalog dims (d1..d4) and no known
@@ -169,53 +186,63 @@ def _elements_for(section) -> Optional[list]:
         return None
     d1, d2, d3, d4 = section.d1, section.d2, section.d3, section.d4
 
+    # Midline endpoints (centroidal) for the element-wise stress evaluation.
+    geom = section.geometry()
+    nodes, segs = geom.nodes, geom.segments
+
+    def _fib(i: int) -> tuple:
+        """Endpoints ((y,z),(y,z)) of skeleton segment i, centroid-relative."""
+        s = segs[i]
+        return (tuple(float(v) for v in nodes[s.n1]),
+                tuple(float(v) for v in nodes[s.n2]))
+
     if name == "I-Beam / W-Shape":          # d1=bf d2=d d3=tf d4=tw
-        bf, d, tf, tw = d1, d2, d3, d4
+        bf, d, tf, tw = d1, d2, d3, d4       # segs: 0=web 1=top-L 2=top-R 3=bot-L 4=bot-R
         half = (bf - tw) / 2.0
         return [
-            PlateElement("flange half (top-L)", half, tf, "OEF"),
-            PlateElement("flange half (top-R)", half, tf, "OEF"),
-            PlateElement("flange half (bot-L)", half, tf, "OEF"),
-            PlateElement("flange half (bot-R)", half, tf, "OEF"),
-            PlateElement("web", d - 2 * tf, tw, "NEF"),
+            PlateElement("flange half (top-L)", half, tf, "OEF", _fib(1)),
+            PlateElement("flange half (top-R)", half, tf, "OEF", _fib(2)),
+            PlateElement("flange half (bot-L)", half, tf, "OEF", _fib(3)),
+            PlateElement("flange half (bot-R)", half, tf, "OEF", _fib(4)),
+            PlateElement("web", d - 2 * tf, tw, "NEF", _fib(0)),
         ]
     if name == "C-Beam / Channel":          # d1=bf d2=d d3=tf d4=tw
-        bf, d, tf, tw = d1, d2, d3, d4
+        bf, d, tf, tw = d1, d2, d3, d4       # segs: 0=web 1=top flange 2=bot flange
         return [
-            PlateElement("top flange", bf - tw, tf, "OEF"),
-            PlateElement("bot flange", bf - tw, tf, "OEF"),
-            PlateElement("web", d - 2 * tf, tw, "NEF"),
+            PlateElement("top flange", bf - tw, tf, "OEF", _fib(1)),
+            PlateElement("bot flange", bf - tw, tf, "OEF", _fib(2)),
+            PlateElement("web", d - 2 * tf, tw, "NEF", _fib(0)),
         ]
     if name == "Z-Beam":                    # d1=bf d2=d d3=tf d4=tw
-        bf, d, tf, tw = d1, d2, d3, d4
+        bf, d, tf, tw = d1, d2, d3, d4       # segs: 0=web 1=bot flange 2=top flange
         return [
-            PlateElement("top flange", bf - tw, tf, "OEF"),
-            PlateElement("bot flange", bf - tw, tf, "OEF"),
-            PlateElement("web", d - 2 * tf, tw, "NEF"),
+            PlateElement("top flange", bf - tw, tf, "OEF", _fib(2)),
+            PlateElement("bot flange", bf - tw, tf, "OEF", _fib(1)),
+            PlateElement("web", d - 2 * tf, tw, "NEF", _fib(0)),
         ]
     if name == "T-Beam":                    # d1=bf d2=tf d3=hw d4=tw
-        bf, tf, hw, tw = d1, d2, d3, d4
+        bf, tf, hw, tw = d1, d2, d3, d4      # segs: 0=web(stem) 1=flange L 2=flange R
         half = (bf - tw) / 2.0
         return [
-            PlateElement("flange half (L)", half, tf, "OEF"),
-            PlateElement("flange half (R)", half, tf, "OEF"),
-            PlateElement("stem", hw, tw, "OEF"),     # free at bottom tip
+            PlateElement("flange half (L)", half, tf, "OEF", _fib(1)),
+            PlateElement("flange half (R)", half, tf, "OEF", _fib(2)),
+            PlateElement("stem", hw, tw, "OEF", _fib(0)),   # free at bottom tip
         ]
     if name == "L-Beam / Angle":            # d1=b d2=h d3=tb d4=th
-        b, h, tb, th = d1, d2, d3, d4
+        b, h, tb, th = d1, d2, d3, d4        # segs: 0=horiz leg 1=vert leg
         return [
-            PlateElement("leg 1", b - th, tb, "OEF"),
-            PlateElement("leg 2", h - tb, th, "OEF"),
+            PlateElement("leg 1", b - th, tb, "OEF", _fib(0)),
+            PlateElement("leg 2", h - tb, th, "OEF", _fib(1)),
         ]
     if name == "Plus / Cross":              # d1=b d2=h d3=th d4=tv
-        b, h, th, tv = d1, d2, d3, d4
+        b, h, th, tv = d1, d2, d3, d4        # segs: 0=+y 1=-y 2=+z 3=-z
         harm = (b - tv) / 2.0
         varm = (h - th) / 2.0
         return [
-            PlateElement("arm +y", harm, th, "OEF"),
-            PlateElement("arm -y", harm, th, "OEF"),
-            PlateElement("arm +z", varm, tv, "OEF"),
-            PlateElement("arm -z", varm, tv, "OEF"),
+            PlateElement("arm +y", harm, th, "OEF", _fib(0)),
+            PlateElement("arm -y", harm, th, "OEF", _fib(1)),
+            PlateElement("arm +z", varm, tv, "OEF", _fib(2)),
+            PlateElement("arm -z", varm, tv, "OEF", _fib(3)),
         ]
     return None
 
@@ -289,8 +316,56 @@ def compression_bending_allowable(Fcy: float,
     """
     Compression-fiber bending allowable: Fcy, capped at the governing crippling
     stress when a crippling summary is available (a slender compression element
-    fails by crippling below yield).
+    fails by crippling below yield). Uses the area-weighted section Fcc
+    (`fcc_governing`) — the uniform-compression (strut) interpretation. The
+    per-element bending check is `worst_element_crippling`.
     """
     if res is None:
         return Fcy
     return min(Fcy, res.fcc_governing)
+
+
+def worst_element_crippling(res: Optional[CripplingResult], sigma_at):
+    """
+    Element-wise crippling check under a normal-stress field (v2.2.1).
+
+    For each plate element, evaluate the longitudinal normal stress
+    `sigma_at(y, z)` (ksi, compression negative) at the element's extreme
+    fibers, take the most compressive, and compare it to that element's OWN
+    crippling stress Fcc_i. Returns the worst element by ratio
+    (applied / Fcc_i):
+
+        (applied_ksi, fcc_i, element_name, (y, z))     or None
+
+    None when no element carries compression (nothing to cripple) or no element
+    has fiber coordinates (e.g. a manually built element list).
+
+    This replaces the earlier area-weighted `fcc_element`-vs-peak check, which
+    was unconservative under bending: a stocky interior element (e.g. a thick
+    web) inflated the section-average Fcc and masked a slender extreme-fiber
+    flange carrying the peak bending compression (CHANGELOG v2.2.1). The
+    area-weighted `fcc_element` is kept for the uniform-compression (strut)
+    interpretation and the Crippling-tab display.
+    """
+    if res is None:
+        return None
+    worst = None                       # (ratio, applied, fcc, name, (y,z))
+    for er in res.elements:
+        el = er.element
+        if not el.fibers or er.fcc <= 0:
+            continue
+        smin = None
+        spt = None
+        for (y, z) in el.fibers:
+            s = sigma_at(y, z)
+            if smin is None or s < smin:
+                smin, spt = s, (y, z)
+        if smin is None or smin >= 0:      # element entirely in tension
+            continue
+        ratio = -smin / er.fcc
+        if worst is None or ratio > worst[0]:
+            worst = (ratio, -smin, er.fcc, el.name, spt)
+    if worst is None:
+        return None
+    _, applied, fcc, name, spt = worst
+    return applied, fcc, name, spt

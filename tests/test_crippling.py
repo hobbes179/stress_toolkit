@@ -101,12 +101,14 @@ def test_stocky_section_is_not_crippling_limited():
     assert compression_bending_allowable(_FCY, res) == pytest.approx(_FCY)
 
 
-def test_crippling_is_a_standalone_row_on_total_compression():
-    # Crippling is its own margin row (σ_c vs Fcc), and its applied stress is the
-    # peak TOTAL compressive normal stress |min(σ_total)| — not the bending part.
+def test_crippling_is_a_standalone_row_element_wise():
+    # Crippling is its own margin row (σ_c vs Fcc). Element-wise (v2.2.1): the
+    # row reports the WORST plate element — its own peak compression vs its own
+    # Fcc_i — not the peak stress against the area-weighted section average.
     from apps.beam_section.calculations import (
         Loads, calc_stress_at_points, calc_margin_table,
     )
+    from library.analysis.crippling import worst_element_crippling
     sec = make_section("C-Beam / Channel", [3, 6, 0.375, 0.25])
     res = crippling_summary(sec, _MAT)
     assert res.fcc_element < _MAT.Fcy               # crippling below yield
@@ -116,11 +118,55 @@ def test_crippling_is_a_standalone_row_on_total_compression():
 
     crow = ms[ms["Check"].str.startswith("σ_c vs")].iloc[0]
     assert "Fcc" in crow["Check"] and "crippling" in crow["Check"]
-    assert crow["Allow"] == pytest.approx(res.fcc_element, rel=1e-6)
-    assert crow["Applied"] == pytest.approx(abs(df["σ_total"].min()), rel=1e-6)
+
+    # Recompute the expected governing element from the same affine normal-
+    # stress field the margin table uses (pure My here, so σ_axial = 0).
+    Iy, Iz, Iyz = sec.Iy(), sec.Iz(), sec.Iyz()
+    D = Iy * Iz - Iyz**2
+    cz = (loads.My * Iz - loads.Mz * Iyz) / D
+    cy = (loads.Mz * Iy - loads.My * Iyz) / D
+    applied, fcc, name, _pt = worst_element_crippling(
+        res, lambda y, z: (cz * z + cy * y) / 1000.0)
+
+    assert crow["Allow"] == pytest.approx(fcc, rel=1e-6)
+    assert crow["Applied"] == pytest.approx(applied, rel=1e-6)
+    # The governing element's own Fcc is at or below the area-weighted section
+    # value — the compression flange, being the outstanding element, is weaker
+    # than the web-inclusive average.
+    assert fcc <= res.fcc_element + 1e-9
     # The STRENGTH interaction no longer carries Fcc — that is the crippling row.
     inter = ms[ms["Check"].str.contains("Combined")].iloc[0]["Allow"]
     assert "Fcc" not in inter
+
+
+def test_element_wise_catches_slender_flange_masked_by_stocky_web():
+    # Fable review finding #1 (the unconservatism the element-wise fix removes):
+    # a slender compression flange (high b/t) paired with a stocky web (low b/t).
+    # The area-weighted section Fcc is pulled UP by the strong web and masks the
+    # flange — the v2.2.0 peak-vs-average check reported a POSITIVE crippling
+    # margin while the flange was actually past its own crippling stress. The
+    # element-wise check must catch it (MS < 0) and report the flange's Fcc.
+    from apps.beam_section.calculations import (
+        Loads, calc_stress_at_points, calc_margin_table,
+    )
+    sec = make_section("I-Beam / W-Shape", [6, 6, 0.08, 0.5])  # thin flange, thick web
+    res = crippling_summary(sec, _MAT)
+    fccs = [er.fcc for er in res.elements]
+    # The slender flange is far weaker than the area-weighted section average
+    # (the web inflates the average) — the exact masking condition.
+    assert min(fccs) < 0.5 * res.fcc_element
+
+    loads = Loads(My=60000)
+    df = calc_stress_at_points(sec, loads, solver="Classical")
+    ms = calc_margin_table(df, _MAT, sec, 1.0, 1.5, loads)
+    crow = ms[ms["Check"].str.startswith("σ_c vs")].iloc[0]
+
+    assert crow["MS"] < 0.0                          # element-wise catches it
+    # The reported allowable is the weak flange's Fcc, not the inflated average.
+    assert crow["Allow"] == pytest.approx(min(fccs), rel=1e-6)
+    # Sanity: the old area-weighted check would have looked SAFE here.
+    old_ms = res.fcc_element / (1.5 * crow["Applied"]) - 1
+    assert old_ms > 0.0
 
 
 def test_crippling_row_captures_pure_axial_compression():

@@ -756,9 +756,7 @@ def render() -> None:
     # Tension bending keeps the shape's Cozzone plastic factor; local crippling
     # is checked on the compression fiber (Crippling tab + the σ_c vs Fcc
     # crippling row on total compression), not gated on the tension side.
-    from library.analysis.crippling import (
-        crippling_summary, compression_bending_allowable,
-    )
+    from library.analysis.crippling import crippling_summary
     cr = crippling_summary(section, material)
     fbu = section.f_cozzone * (material.Ftu or 0.0)
 
@@ -1131,27 +1129,30 @@ def render() -> None:
                 )
         else:
             _fcy = cr.Fcy
-            _fcap = compression_bending_allowable(material.Fcy or 0.0, cr)
-            # Crippling verdict: crippling is a standalone stability check on the
-            # total compressive stress (σ_c vs Fcc) — no tension-side plastic gate.
+            _fcmin = cr.fcc_min
+            # Crippling verdict: crippling is a standalone stability check. The
+            # margin row is ELEMENT-WISE (v2.2.1) — each plate element's own peak
+            # compression (axial + bending) vs its OWN Fcc, worst element
+            # governing — so a slender compression flange is not masked by a
+            # stocky web. No tension-side plastic gate.
             if cr.crippling_limited:
                 st.warning(
-                    f"**Crippling-limited.** Section crippling Fcc ≈ "
-                    f"{cr.fcc_element:.1f} ksi < Fcy ({_fcy:.0f} ksi): the thin "
-                    f"compression elements buckle locally before yield. The "
-                    f"**peak total compression (axial + bending) is checked "
-                    f"against Fcc = {_fcap:.1f} ksi** — the `σ_c vs Fcc` row on "
-                    f"the Margins tab. The tension fiber keeps its plastic factor "
-                    f"f = {section.f_cozzone:.2f} (Fbu = f·Ftu).",
+                    f"**Crippling-limited.** The weakest compression element "
+                    f"crripples at Fcc ≈ {_fcmin:.1f} ksi < Fcy ({_fcy:.0f} ksi) "
+                    f"(area-weighted section Fcc ≈ {cr.fcc_element:.1f} ksi, the "
+                    f"uniform-compression / strut value). The `σ_c vs Fcc` row on "
+                    f"the Margins tab checks **each element's own compression "
+                    f"against its own Fcc** (see the per-element table below) and "
+                    f"reports the worst. The tension fiber keeps its plastic "
+                    f"factor f = {section.f_cozzone:.2f} (Fbu = f·Ftu).",
                     icon="⚠️",
                 )
             else:
                 st.success(
-                    f"**Not crippling-limited.** Section crippling Fcc ≈ "
-                    f"{cr.fcc_element:.1f} ksi ≥ Fcy ({_fcy:.0f} ksi): the "
-                    f"compression elements reach yield before local buckling, so "
-                    f"the compression bending fiber uses the full Fcy and the "
-                    f"tension fiber earns its plastic factor f = "
+                    f"**Not crippling-limited.** Every plate element reaches Fcy "
+                    f"({_fcy:.0f} ksi) before local buckling (weakest element Fcc "
+                    f"≈ {_fcmin:.1f} ksi ≥ Fcy), so the compression fiber uses the "
+                    f"full Fcy and the tension fiber earns its plastic factor f = "
                     f"{section.f_cozzone:.2f}.",
                     icon="✅",
                 )
