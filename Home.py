@@ -47,6 +47,16 @@ MODULES = [
         "flagged with citations.",
         "pages/2_Material_Library.py",
     ),
+    (
+        "🔩",
+        "Tie-Rod Layout",
+        "Rigid bodies on two-force members with spherical bearings both ends. "
+        "Build the assembly, then search for a rod layout that restrains it "
+        "and survives losing any one rod. Multi-body load extraction from the "
+        "screw matrix, margins under a closed-form orientation envelope, "
+        "animated mechanism modes, and a rod-count/slenderness trade curve.",
+        "pages/3_Tie_Rod_Layout.py",
+    ),
 ]
 
 
