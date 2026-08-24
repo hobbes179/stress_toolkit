@@ -50,6 +50,15 @@ from library.tierod.cases import (
     nearest_case,
     parse_case_name,
 )
+from library.tierod.clash import (
+    MIN_GAP_DEFAULT,
+    Clash,
+    ClashReport,
+    check_clearance,
+    segment_gap,
+    signed_clearance,
+    worst_gap,
+)
 from library.tierod.clearance import (
     CLEARANCE_TYPES,
     Box,
@@ -287,6 +296,13 @@ __all__ = [
     "SearchResult",
     "space_from",
     "topology_options",
+    "MIN_GAP_DEFAULT",
+    "Clash",
+    "ClashReport",
+    "check_clearance",
+    "segment_gap",
+    "signed_clearance",
+    "worst_gap",
     "plan_counts",
     "plan_size",
     "spread_axis",

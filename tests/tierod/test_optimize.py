@@ -28,20 +28,26 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apps.tierod import examples
+from tests.tierod.legacy_demo import PAIRWISE, two_tank_demo
 from library.tierod import failsafe as fs
 from library.tierod import optimize as opt
 from library.tierod.model import Assembly
 
-CRIT = fs.Criteria(sigma_floor=0.05)
-PAIRWISE = [("band_a", "foot_a"), ("band_b", "foot_b")]
+# Clearance is switched OFF for the mechanics tests below. They are about the
+# optimizer -- does refinement shorten rods, does the accept-guard hold, is the
+# search a local method -- and the `pairwise` fixture's two-tank geometry has
+# genuine interference that would mask all of it. Interference IS exercised,
+# deliberately and on its own, in "Physical interference" at the end of this
+# file, and in `test_clash.py`.
+CRIT = fs.Criteria(sigma_floor=0.05, min_gap=None)
+CLEAR = fs.Criteria(sigma_floor=0.05, min_gap=0.25)
 
 
 @pytest.fixture(scope="module")
 def space() -> opt.LayoutSpace:
     """The demo's bodies and regions with no rods — the declared design space,
     which is exactly what a user hands the tool."""
-    return opt.space_from(examples.demo_assembly())
+    return opt.space_from(two_tank_demo())
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +89,7 @@ def test_a_same_body_rod_really_does_nothing():
     from library.tierod.kernel import assemble
     from library.tierod.model import new_rod
 
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     before = assemble(a).rank
     a.add_rod(new_rod(a, id="useless", region_a="band_a", region_b="band_a",
                       q_a=[0.3, 10.0], q_b=[2.0, 20.0]))
@@ -260,8 +266,8 @@ def test_refinement_pulls_in_a_deliberately_stretched_layout(pairwise):
     """The whole point: shorten the rods without falling off the conditioning
     cliff. Measured on this seed, max lambda goes 287 -> ~72."""
     start = opt.seed_symmetric(pairwise, 12, spread=(24.0, 22.0), twist=0.25)
-    before = fs.layout_metrics(start)
-    after = fs.layout_metrics(opt.refine(start, CRIT, max_iter=60))
+    before = fs.layout_metrics(start, min_gap=None)
+    after = fs.layout_metrics(opt.refine(start, CRIT, max_iter=60), min_gap=None)
 
     assert after.max_lambda < 0.5 * before.max_lambda
     assert after.total_length < before.total_length
@@ -277,9 +283,12 @@ def test_refinement_refuses_a_result_the_true_objective_dislikes(pairwise, monke
     `refine` must still hand back the layout it was given. Without the guard
     this returns the lengthened layout and the caller never knows.
     """
-    nominal = fs.Criteria(sigma_floor=0.05, require_single_failure=False)
+    nominal = fs.Criteria(sigma_floor=0.05, require_single_failure=False,
+                          min_gap=None)
     start = opt.seed_symmetric(pairwise, 14)
-    assert fs.feasible(fs.layout_metrics(start), nominal).ok, "start must be feasible"
+    assert fs.feasible(
+        fs.layout_metrics(start, min_gap=None), nominal
+    ).ok, "start must be feasible"
 
     monkeypatch.setattr(opt, "surrogate", lambda m, c: -m.max_lambda)
     out = opt.refine(start, nominal, max_iter=30)
@@ -341,7 +350,7 @@ def test_what_it_finds_beats_the_hand_built_demo(found):
     its achieved slenderness at a small seed budget is not stable enough to
     assert against. Quality is gated relative to its own seeds instead.
     """
-    shipped = fs.layout_metrics(examples.demo_assembly())
+    shipped = fs.layout_metrics(two_tank_demo(), min_gap=None)
     best = found.best.metrics
     assert not shipped.survives_single_loss
     assert best.survives_single_loss
@@ -427,4 +436,85 @@ def test_a_found_layout_is_a_real_assembly_that_round_trips(found):
     assert np.allclose(back.design_vector(), layout.design_vector())
     assert fs.layout_metrics(back).max_lambda == pytest.approx(
         found.best.metrics.max_lambda
+    )
+
+
+# ======================================================================
+# Physical interference in the search (added 2026-08-24)
+#
+# Before this the search happily returned unbuildable layouts: measured on the
+# shipped demo, the best 16-rod answer with clearance off had a rod 0.625 in
+# INSIDE a tank. These tests are the ones that would fail if the gate were
+# unwired again.
+# ======================================================================
+
+
+def test_the_search_returns_only_clash_free_layouts(pairwise):
+    """The owner's requirement, stated as a test: never suggest a solution
+    that has physical clashing."""
+    result = opt.search(pairwise, CLEAR, n_range=range(13, 15),
+                        n_symmetric=2, n_random=2, max_iter=20,
+                        rng=np.random.default_rng(5))
+    for cand in result.feasible_candidates:
+        metrics = fs.layout_metrics(cand.assembly, min_gap=CLEAR.min_gap)
+        assert metrics.worst_clash == 0.0, (
+            f"{cand.n_rods} rods: {[c.message() for c in metrics.clashes]}"
+        )
+
+
+def test_turning_clearance_off_admits_layouts_that_turning_it_on_rejects():
+    """The gate has to actually bite. If both settings gave the same answers
+    the wiring would be decorative."""
+    space = opt.space_from(two_tank_demo())
+    kw = dict(n_range=range(13, 14), n_symmetric=2, n_random=0, max_iter=10)
+    loose = opt.search(space, fs.Criteria(min_gap=None), **kw)
+    strict = opt.search(space, fs.Criteria(min_gap=0.25), **kw)
+    assert len(loose.feasible_candidates) > len(strict.feasible_candidates)
+
+
+def test_refinement_steers_away_from_a_clash_rather_than_only_failing_it(pairwise):
+    """A hard gate alone is not enough: if the surrogate ignored interference,
+    refinement would walk into clashes and every candidate would be rejected
+    with nothing learned. The penalty has to give it a gradient to follow."""
+    start = opt.seed_symmetric(pairwise, 14, spread=(6.0, 5.0), twist=0.25)
+    before = fs.layout_metrics(start, min_gap=0.25).worst_clash
+    if not before:
+        pytest.skip("this seed does not clash; nothing to steer away from")
+    after = fs.layout_metrics(
+        opt.refine(start, CLEAR, max_iter=60), min_gap=0.25
+    ).worst_clash
+    assert after < before
+
+
+def test_the_clearance_penalty_is_linear_not_squared():
+    """Deep penetration has no ceiling -- a rod clean through a tank is inches
+    out -- and a squared term would dwarf every other consideration and stall
+    the line search, exactly as the multiplicative penalty once did."""
+    base = fs.LayoutMetrics(
+        n_rods=4, n_free=1, n_dof=6, rank=6, sigma_min=1.0,
+        lengths=np.full(4, 10.0), lambdas=np.full(4, 50.0),
+        lambda_crit=60.0, rho2=np.full(4, 0.5), rod_ids=list("abcd"),
+    )
+    from dataclasses import replace
+
+    # Equally spaced samples: a linear penalty gives equal first differences,
+    # a squared one does not. (Sampling 1, 2, 4 instead compares a step of one
+    # against a step of two, which a linear penalty also fails.)
+    one, two, three = (
+        opt.surrogate(replace(base, worst_clash=c), CLEAR) for c in (1.0, 2.0, 3.0)
+    )
+    assert (two - one) == pytest.approx(three - two)
+    assert two > one, "a deeper clash must cost more"
+
+
+def test_a_clash_free_layout_pays_no_clearance_penalty():
+    base = fs.LayoutMetrics(
+        n_rods=4, n_free=1, n_dof=6, rank=6, sigma_min=1.0,
+        lengths=np.full(4, 10.0), lambdas=np.full(4, 50.0),
+        lambda_crit=60.0, rho2=np.full(4, 0.5), rod_ids=list("abcd"),
+    )
+    from dataclasses import replace
+
+    assert opt.surrogate(replace(base, worst_clash=0.0), CLEAR) == pytest.approx(
+        opt.surrogate(replace(base, worst_clash=None), CLEAR)
     )

@@ -568,3 +568,38 @@ def test_the_quoted_range_names_only_the_counts_that_will_run(two_disc):
     est = us.budget(wide, range(7, 12), 2, 2)
     assert est.counts == (9, 10, 11)
     assert "9–11" in est.message()
+
+
+# ======================================================================
+# The interference control (2026-08-24)
+# ======================================================================
+
+
+def test_the_summary_states_the_interference_result(result):
+    summary = us.metrics_summary(result.best.metrics, result.criteria)
+    assert summary["interference"] in {"clear", "not checked"} or \
+        "clashing" in summary["interference"]
+
+
+def test_an_unchecked_layout_is_reported_as_UNCHECKED_not_as_clear(two_disc):
+    """The distinction the whole design turns on: 'not checked' is the absence
+    of a statement, 'clear' is a positive one, and conflating them is how an
+    unbuildable layout ships."""
+    metrics = fs.layout_metrics(two_disc, min_gap=None)
+    summary = us.metrics_summary(metrics, fs.Criteria(min_gap=None))
+    assert summary["interference"] == "not checked"
+
+
+def test_a_clash_free_layout_is_reported_as_clear():
+    from apps.tierod import examples
+
+    metrics = fs.layout_metrics(examples.payload_deck())
+    assert us.metrics_summary(metrics, fs.Criteria())["interference"] == "clear"
+
+
+def test_a_clashing_layout_reports_the_count_and_the_shortfall():
+    from apps.tierod import examples
+
+    metrics = fs.layout_metrics(examples.clash_gantry())
+    text = us.metrics_summary(metrics, fs.Criteria())["interference"]
+    assert "clashing pair" in text and "short by" in text

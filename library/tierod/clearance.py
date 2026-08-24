@@ -102,6 +102,22 @@ class ClearancePrimitive:
         inside the solid where `pl - nearest` carries no direction."""
         raise NotImplementedError
 
+    def centroid(self) -> Vec3:
+        """Centre of volume, BODY-LOCAL.
+
+        Not always the origin, which is the trap this exists to close: a
+        `Cylinder` is defined by a z RANGE, so one spanning z = 0 .. 10 from an
+        origin at its base has its centroid 5 in up. A body left at the default
+        `cg = [0, 0, 0]` therefore carries its mass at the base of the tank,
+        which changes the inertial moment about the datum -- not just the
+        picture.
+        """
+        return self.to_body(self._centroid_local())
+
+    def _centroid_local(self) -> np.ndarray:
+        """Centre of volume in primitive-local coords. Origin unless overridden."""
+        return np.zeros(3)
+
     def distance_to_point(self, p: Vec3) -> float:
         """Distance from p to the solid. Zero inside or on the boundary."""
         pl = self.to_local(p)
@@ -184,6 +200,15 @@ class Cylinder(ClearancePrimitive):
         ParamSpec("z_max", "Z upper (in)", 1.0, 0.5),
     )
 
+
+    def _centroid_local(self):
+        """Halfway along the axis — NOT the origin.
+
+        The only primitive where the two differ, and the reason `centroid()`
+        exists at all: a tank spanning z = 0 .. 10 from an origin at its base
+        has its mass 5 in up.
+        """
+        return np.array([0.0, 0.0, 0.5 * (self.z_min + self.z_max)])
 
     def _nearest_local(self, pl):
         x, y, z = pl

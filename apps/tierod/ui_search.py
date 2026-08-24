@@ -41,6 +41,7 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from library.tierod import clash
 from library.tierod import failsafe as fs
 from library.tierod import optimize as opt
 from library.tierod import serialize
@@ -255,6 +256,15 @@ def metrics_summary(metrics, criteria=None) -> dict:
             "survives any one loss" if metrics.survives_single_loss
             else f"{len(metrics.critical)} critical rod(s)"
         ),
+        # "not checked" is deliberately distinct from "clear": one is the
+        # absence of a statement, the other is a positive one, and reporting
+        # an unchecked layout as clear is how an unbuildable one ships.
+        "interference": (
+            "not checked" if metrics.worst_clash is None
+            else "clear" if metrics.worst_clash == 0.0
+            else f"{len(metrics.clashes)} clashing pair(s), worst short by "
+                 f"{metrics.worst_clash:.3f} in"
+        ),
         "verdict": "feasible" if verdict.ok else "; ".join(verdict.reasons),
     }
 
@@ -438,10 +448,28 @@ def criteria_inputs() -> fs.Criteria:
         format="%g", key="tierod::s::lamcap",
         help="Optional. Rejects any layout with a rod more slender than this.",
     )
+
+    c4, c5 = st.columns([1, 2])
+    check = c4.checkbox(
+        "Check interference", value=True, key="tierod::s::clearcheck",
+        help="Rejects any layout with a rod through a body, or two rods "
+             "occupying the same space. Measured on the old demo: with this "
+             "OFF, the best layout the search returned had a rod 0.625 in "
+             "INSIDE a tank. It roughly doubles the search time.",
+    )
+    gap = c5.number_input(
+        "Minimum clearance (in)", value=float(clash.MIN_GAP_DEFAULT),
+        min_value=0.0, step=0.05, format="%g", disabled=not check,
+        key="tierod::s::mingap",
+        help="Required between things that are NOT bolted together. Each "
+             "rod's radius is added on top, from its section area. Rods "
+             "sharing a pin are allowed to meet there.",
+    )
     return fs.Criteria(
         sigma_floor=float(floor),
         require_single_failure=bool(require),
         max_lambda=float(cap) if cap > 0 else None,
+        min_gap=float(gap) if check else None,
     )
 
 
@@ -625,7 +653,8 @@ def _results(result, assembly, state_key: str) -> None:
         col.metric(key, summary[key])
     st.caption(
         f"Past the knee: **{summary['past the knee']}** · "
-        f"{summary['single-rod loss']} · {summary['verdict']}"
+        f"{summary['single-rod loss']} · interference: "
+        f"{summary['interference']} · {summary['verdict']}"
     )
 
     from apps.tierod import ui_scene

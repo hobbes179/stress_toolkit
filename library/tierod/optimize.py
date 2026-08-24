@@ -325,6 +325,14 @@ def surrogate(metrics: fs.LayoutMetrics, criteria: fs.Criteria) -> float:
     if criteria.require_single_failure:
         thin = max(0.0, 1.0 - metrics.rho2_min / _RHO_TARGET)
         value += _PENALTY * ref * thin * thin
+    if metrics.worst_clash:
+        # LINEAR, unlike the two above. Those saturate at a target and their
+        # squared form is well scaled near it; a clash shortfall has no such
+        # ceiling -- a rod driven clean through a tank is metres out -- and a
+        # squared term there would dwarf every other consideration and stall
+        # the line search, the same way the multiplicative penalty did.
+        scale = max(criteria.min_gap or 0.0, 0.25)
+        value += _PENALTY * ref * (metrics.worst_clash / scale)
     return value
 
 
@@ -357,7 +365,9 @@ def refine(assembly: Assembly, criteria: fs.Criteria | None = None,
     def f(x: np.ndarray) -> float:
         working.set_design_vector(x)
         try:
-            return surrogate(fs.layout_metrics(working), criteria)
+            return surrogate(
+                fs.layout_metrics(working, min_gap=criteria.min_gap), criteria
+            )
         except (ValueError, np.linalg.LinAlgError):
             return float("inf")
 
@@ -368,8 +378,10 @@ def refine(assembly: Assembly, criteria: fs.Criteria | None = None,
 
     best = _copy(assembly)
     best.set_design_vector(np.clip(result.x, *_bound_arrays(bounds)))
-    if fs.objective(fs.layout_metrics(best), criteria) <= fs.objective(
-        fs.layout_metrics(assembly), criteria
+    if fs.objective(
+        fs.layout_metrics(best, min_gap=criteria.min_gap), criteria
+    ) <= fs.objective(
+        fs.layout_metrics(assembly, min_gap=criteria.min_gap), criteria
     ):
         return best
     return assembly
@@ -525,7 +537,7 @@ def search(
             evaluated += 1
             try:
                 refined = refine(layout, criteria, max_iter=max_iter)
-                metrics = fs.layout_metrics(refined)
+                metrics = fs.layout_metrics(refined, min_gap=criteria.min_gap)
             except (ValueError, np.linalg.LinAlgError):
                 continue
             candidate = Candidate(

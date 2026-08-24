@@ -447,6 +447,27 @@ class Body:
     def dir_to_global(self, v_local: Vec3) -> Vec3:
         return self.R @ np.asarray(v_local, dtype=float)
 
+    def shell_centroid(self) -> Vec3 | None:
+        """Centre of volume of this body's clearance shell, body-local.
+
+        `None` when the body has no shell, which is a real state and not an
+        error: a body can carry mass with no geometry declared.
+        """
+        return None if self.clearance is None else self.clearance.centroid()
+
+    def snap_cg_to_shell(self) -> bool:
+        """Move `cg` to the shell's centre of volume. True if it moved.
+
+        Reported rather than silent because it overwrites a number the user
+        may have entered on purpose.
+        """
+        centre = self.shell_centroid()
+        if centre is None:
+            return False
+        moved = not np.allclose(self.cg, centre)
+        self.cg = np.asarray(centre, dtype=float)
+        return moved
+
     def sweep_block(self) -> np.ndarray:
         """W_p = m G [I3 ; [R cg]x], the 6x3 map from a UNIT load direction to
         the wrench applied at this body's datum.

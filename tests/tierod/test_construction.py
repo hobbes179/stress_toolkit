@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 
 from apps.tierod import examples
+from tests.tierod.legacy_demo import two_tank_demo
 from library.tierod import model as md
 from library.tierod import serialize as ser
 from library.tierod import sweep as sw
@@ -290,7 +291,7 @@ def test_a_rod_with_a_wrong_length_q_is_refused(empty):
 
 
 def test_removing_a_region_removes_the_rods_hanging_off_it():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     removed = a.remove_region("band_a")
     assert removed.regions == ["band_a"]
     assert sorted(removed.rods) == [f"rod_a{k}" for k in range(6)]
@@ -300,7 +301,7 @@ def test_removing_a_region_removes_the_rods_hanging_off_it():
 
 
 def test_removing_a_body_removes_its_regions_and_their_rods():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     removed = a.remove_body("tank_a")
     assert removed.bodies == ["tank_a"]
     assert removed.regions == ["band_a"]
@@ -310,7 +311,7 @@ def test_removing_a_body_removes_its_regions_and_their_rods():
 
 
 def test_refusing_to_cascade_raises_instead_of_orphaning():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     with pytest.raises(ValueError, match="rod"):
         a.remove_region("band_a", cascade=False)
     assert "band_a" in a.regions, "a refused removal must change nothing"
@@ -318,7 +319,7 @@ def test_refusing_to_cascade_raises_instead_of_orphaning():
 
 
 def test_a_refused_body_removal_leaves_the_model_untouched():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     before = ser.dumps(a)
     with pytest.raises(ValueError):
         a.remove_body("tank_a", cascade=False)
@@ -326,7 +327,7 @@ def test_a_refused_body_removal_leaves_the_model_untouched():
 
 
 def test_removing_a_rod_leaves_everything_else_alone():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.remove_rod("rod_a0")
     assert "rod_a0" not in a.rods and len(a.rods) == 11
     assert len(a.regions) == 4 and len(a.bodies) == 3
@@ -334,7 +335,7 @@ def test_removing_a_rod_leaves_everything_else_alone():
 
 
 def test_removing_something_that_is_not_there_raises():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     for fn in (a.remove_body, a.remove_region, a.remove_rod):
         with pytest.raises(KeyError):
             fn("nope")
@@ -346,13 +347,13 @@ def test_removing_something_that_is_not_there_raises():
 
 
 def test_rods_default_to_a_single_group():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     assert {r.group for r in a.rods.values()} == {md.DEFAULT_GROUP}
     assert a.rod_groups() == {md.DEFAULT_GROUP: sorted(a.rods)}
 
 
 def test_groups_partition_the_rods():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     for rod_id, rod in a.rods.items():
         rod.group = "tank_a" if "_a" in rod_id else "tank_b"
     groups = a.rod_groups()
@@ -380,7 +381,7 @@ def test_every_example_round_trips_through_json(name):
 def test_a_round_trip_reproduces_the_analysis_exactly():
     """The real test. Field-by-field equality can pass while a dropped frame
     triad or a re-orthonormalized rotation moves every rod load."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     back = ser.loads(ser.dumps(a))
     assert np.array_equal(sw.transfer_matrix(a), sw.transfer_matrix(back))
     r1, r2 = sw.run_sweep(a), sw.run_sweep(back)
@@ -412,7 +413,7 @@ def test_an_arbitrary_frame_triad_survives_the_round_trip():
     if np.linalg.det(Q) < 0:
         Q[:, 0] = -Q[:, 0]
 
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     band = a.regions["band_a"]
     band.e1, band.e2, band.e3 = Q[:, 0], Q[:, 1], Q[:, 2]
     before = a.rod_endpoints(a.rods["rod_a0"])[0]
@@ -426,7 +427,7 @@ def test_an_arbitrary_frame_triad_survives_the_round_trip():
 def test_a_rotated_body_survives_the_round_trip():
     """R is a 3x3 that json has to carry as nested lists. A body left at
     identity would still solve, just wrongly."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.bodies["tank_a"].R = _rot_z(37.0)
     back = ser.loads(ser.dumps(a))
     assert np.allclose(back.bodies["tank_a"].R, _rot_z(37.0))
@@ -434,7 +435,7 @@ def test_a_rotated_body_survives_the_round_trip():
 
 
 def test_clearance_primitives_keep_their_type_and_size():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     back = ser.loads(ser.dumps(a))
     assert isinstance(back.bodies["plate"].clearance, Box)
     assert isinstance(back.bodies["tank_a"].clearance, Cylinder)
@@ -451,7 +452,7 @@ def test_a_body_with_no_clearance_round_trips_as_none():
 
 
 def test_rod_strength_data_and_group_survive():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.rods["rod_a0"].P_tension_allow = 4321.0
     a.rods["rod_a0"].group = "heavies"
     back = ser.loads(ser.dumps(a))
@@ -463,13 +464,13 @@ def test_rod_strength_data_and_group_survive():
 
 
 def test_the_standoff_survives():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     assert a.rods["rod_a0"].end_a.h == 0.75
     assert ser.loads(ser.dumps(a)).rods["rod_a0"].end_a.h == 0.75
 
 
 def test_the_payload_is_plain_json_with_a_schema_version():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     text = ser.dumps(a)
     payload = json.loads(text)
     assert payload["schema"] == ser.SCHEMA_VERSION
@@ -478,21 +479,21 @@ def test_the_payload_is_plain_json_with_a_schema_version():
 
 
 def test_a_future_schema_is_refused_rather_than_half_read():
-    payload = json.loads(ser.dumps(examples.demo_assembly()))
+    payload = json.loads(ser.dumps(two_tank_demo()))
     payload["schema"] = ser.SCHEMA_VERSION + 99
     with pytest.raises(ValueError, match="schema"):
         ser.loads(json.dumps(payload))
 
 
 def test_an_unknown_region_type_names_itself_in_the_error():
-    payload = json.loads(ser.dumps(examples.demo_assembly()))
+    payload = json.loads(ser.dumps(two_tank_demo()))
     payload["regions"]["band_a"]["type"] = "Hyperboloid"
     with pytest.raises(ValueError, match="Hyperboloid"):
         ser.loads(json.dumps(payload))
 
 
 def test_save_and_load_through_a_file(tmp_path):
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     path = tmp_path / "assembly.json"
     ser.save(a, path)
     back = ser.load(path)
@@ -539,7 +540,7 @@ def test_a_clearance_frame_reaches_the_rod_endpoint_through_the_standoff():
     """`h` offsets the pin along `clearance.outward(p)`, so the shell's
     orientation is not decoration — it moves the attachment point. The demo's
     rod_a0 carries a 0.75 in standoff, which is what makes this measurable."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     assert a.rods["rod_a0"].end_a.h == 0.75
     before = a.rod_endpoints(a.rods["rod_a0"])[0].copy()
 
@@ -550,7 +551,7 @@ def test_a_clearance_frame_reaches_the_rod_endpoint_through_the_standoff():
 
 
 def test_a_turned_clearance_frame_survives_the_round_trip():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     clearance = a.bodies["tank_a"].clearance
     clearance.e1, clearance.e2, clearance.e3 = frame_from_axis("X")
     want = a.rod_endpoints(a.rods["rod_a0"])[0]
@@ -564,7 +565,7 @@ def test_a_shifted_clearance_origin_survives_the_round_trip():
     """The shell's ORIGIN is body-local and independent of the body datum, so
     it is its own stored value. Every shipped example happens to leave it at
     zero, which is exactly why it needs its own test."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.bodies["tank_a"].clearance.origin = np.array([0.4, -0.7, 1.1])
     want = a.rod_endpoints(a.rods["rod_a0"])[0].copy()
 

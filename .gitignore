@@ -15,6 +15,10 @@ env/
 # Streamlit
 .streamlit/secrets.toml
 
+# Claude Code — settings.json is shared (permission prefixes); the .local one
+# accumulates one-off scratchpad paths from a single session.
+.claude/settings.local.json
+
 # Distribution / packaging
 dist/
 build/

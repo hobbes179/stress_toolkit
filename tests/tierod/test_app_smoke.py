@@ -43,12 +43,13 @@ def test_every_example_renders(example):
 
 def test_the_mechanism_case_reports_an_error_not_a_crash():
     """A mechanism must produce a diagnosis, never a traceback."""
-    at = _run(**{"tierod::example": "Mechanism — baseplate idealized as a line"})
+    at = _run(**{"tierod::example": "Mechanism — radial spokes on a turntable"})
     assert not at.exception
     text = " ".join(str(e.value) for e in at.error) + " ".join(
         str(w.value) for w in at.warning
     )
-    assert "collinear" in text.lower() or "mechanism" in text.lower()
+    assert any(word in text.lower() for word in
+               ("concurrent", "common line", "mechanism")), text
 
 
 def test_a_healthy_layout_reports_success():
@@ -65,22 +66,22 @@ def test_ground_toggle_does_not_clear_mass_in_the_running_app():
     assert not at.exception
 
     assembly = at.session_state["tierod::assembly"]
-    assert assembly.bodies["plate"].mass == 400.0
+    assert assembly.bodies["deck"].mass == 0.0
 
-    box = next(c for c in at.checkbox if c.key == "tierod::ground::plate")
+    box = next(c for c in at.checkbox if c.key == "tierod::ground::deck")
     box.set_value(False).run()          # un-ground it
     assert not at.exception
-    at.session_state["tierod::assembly"].bodies["plate"].mass == 400.0
+    at.session_state["tierod::assembly"].bodies["deck"].mass == 0.0
 
-    box = next(c for c in at.checkbox if c.key == "tierod::ground::plate")
+    box = next(c for c in at.checkbox if c.key == "tierod::ground::deck")
     box.set_value(True).run()           # and back
     assert not at.exception
-    assert at.session_state["tierod::assembly"].bodies["plate"].mass == 400.0
-    assert at.session_state["tierod::assembly"].bodies["plate"].g_factor == 6.0
+    assert at.session_state["tierod::assembly"].bodies["deck"].mass == 0.0
+    assert at.session_state["tierod::assembly"].bodies["deck"].g_factor == 1.0
 
 
 def test_only_the_selected_rod_gets_sliders():
-    """48 sliders in one sidebar is clutter and invites dragging the wrong rod.
+    """84 sliders in one sidebar is clutter and invites dragging the wrong rod.
     One rod is selected at a time, so only its 2-4 parameters are live."""
     at = AppTest.from_file(PAGE, default_timeout=TIMEOUT)
     at.session_state["tierod::example"] = examples.DEFAULT_EXAMPLE
@@ -88,11 +89,11 @@ def test_only_the_selected_rod_gets_sliders():
     assert not at.exception
 
     a = at.session_state["tierod::assembly"]
-    assert a.n_design_vars() == 48, "the model still has all 48 variables"
+    assert a.n_design_vars() == 84, "the model still has all 84 variables"
 
     q_sliders = [s for s in at.slider if s.key and s.key.startswith("tierod::q::")]
     assert len(q_sliders) == 4, f"expected one rod's worth, got {len(q_sliders)}"
-    assert all("rod_a0" in s.key for s in q_sliders)
+    assert all("av0" in s.key for s in q_sliders)
 
 
 def test_switching_the_selected_rod_switches_the_sliders():
@@ -100,11 +101,11 @@ def test_switching_the_selected_rod_switches_the_sliders():
     at.session_state["tierod::example"] = examples.DEFAULT_EXAMPLE
     at.run()
     picker = next(s for s in at.selectbox if s.key == "tierod::qrod")
-    picker.set_value("rod_b3").run()
+    picker.set_value("tk3").run()
     assert not at.exception
     q_sliders = [s for s in at.slider if s.key and s.key.startswith("tierod::q::")]
     assert len(q_sliders) == 4
-    assert all("rod_b3" in s.key for s in q_sliders)
+    assert all("tk3" in s.key for s in q_sliders)
 
 
 def test_moving_a_slider_moves_only_that_rod():
@@ -117,9 +118,17 @@ def test_moving_a_slider_moves_only_that_rod():
     s.set_value(float(s.value) + 0.4).run()
     assert not at.exception
 
-    after = at.session_state["tierod::assembly"].design_vector()
+    a = at.session_state["tierod::assembly"]
+    after = a.design_vector()
     moved = np.flatnonzero(~np.isclose(after, before))
-    assert moved.size == 1 and moved[0] < 4, "only one variable, on the selected rod"
+    assert moved.size == 1, "exactly one design variable should have moved"
+
+    # Which rod owns that slot, asked of the model rather than assumed from an
+    # index. The old form hardcoded `moved[0] < 4`, which only held while the
+    # alphabetically-first rod also happened to be first in the design vector.
+    owners = [rod_id for rod_id, _, nd in a.design_vector_layout()
+              for _ in range(nd)]
+    assert owners[moved[0]] == s.key.split("::")[2]
 
 
 # ======================================================================
@@ -172,7 +181,7 @@ def test_ungrounding_every_body_reports_a_diagnosis_not_a_traceback():
     at = AppTest.from_file(PAGE, default_timeout=TIMEOUT)
     at.session_state["tierod::example"] = examples.DEFAULT_EXAMPLE
     at.run()
-    next(c for c in at.checkbox if c.key == "tierod::ground::plate").set_value(
+    next(c for c in at.checkbox if c.key == "tierod::ground::deck").set_value(
         False
     ).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -210,11 +219,12 @@ def test_the_layout_scene_is_coloured_by_load_ratio():
     from apps.tierod import ui_scene
 
     at = _run(**{"tierod::example": examples.DEFAULT_EXAMPLE})
+    ids = set(at.session_state["tierod::assembly"].rods)
     rods = [
         t for t in _figure_spec(at, "tierod-scene")["data"]
-        if str(t.get("name", "")).startswith("rod_")
+        if str(t.get("name", "")) in ids
     ]
-    assert len(rods) == 12
+    assert len(rods) == len(ids)
     assert ui_scene.ROD_NEUTRAL not in {t["line"]["color"] for t in rods}
     assert all("LR" in t.get("hovertext", "") for t in rods)
 

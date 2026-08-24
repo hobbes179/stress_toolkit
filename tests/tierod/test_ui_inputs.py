@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.tierod.legacy_demo import mixed_region_assembly, two_tank_demo
+
 from apps.tierod import examples, ui_inputs
 from library.tierod import allowables as al
 from library.tierod import sweep as sw
@@ -28,7 +30,7 @@ from library.tierod.model import Body
 
 
 def test_slider_specs_follow_the_design_vector_layout():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     specs = ui_inputs.slider_specs(a)
     assert len(specs) == a.n_design_vars() == 48
     layout_ends = [(rod_id, tag) for rod_id, tag, _ in a.design_vector_layout()]
@@ -36,7 +38,7 @@ def test_slider_specs_follow_the_design_vector_layout():
 
 
 def test_slider_bounds_are_the_region_bounds():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     for spec in ui_inputs.slider_specs(a):
         region = a.regions[spec.region_id]
         lo, hi = region.bounds()[spec.axis]
@@ -46,7 +48,7 @@ def test_slider_bounds_are_the_region_bounds():
 
 
 def test_slider_count_per_end_is_the_region_dimension():
-    a = examples.mixed_region_assembly()
+    a = mixed_region_assembly()
     per_end: dict[tuple[str, str], int] = {}
     for s in ui_inputs.slider_specs(a):
         per_end[(s.rod_id, s.end)] = per_end.get((s.rod_id, s.end), 0) + 1
@@ -68,7 +70,7 @@ def test_no_per_type_ui_code_is_needed_for_a_new_primitive():
 
 
 def test_design_vector_round_trips_through_the_sliders():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     x0 = a.design_vector()
     assert x0.shape == (48,)
     x1 = x0 + 0.01
@@ -79,13 +81,13 @@ def test_design_vector_round_trips_through_the_sliders():
 
 
 def test_set_design_vector_rejects_a_wrong_length():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     with pytest.raises(ValueError):
         a.set_design_vector(np.zeros(3))
 
 
 def test_slider_labels_identify_the_rod_end_and_parameter():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     labels = [s.label for s in ui_inputs.slider_specs(a)]
     assert len(set(labels)) == len(labels), "labels must be unique widget keys"
     assert any("rod_a0" in lbl and "a" in lbl for lbl in labels)
@@ -148,7 +150,7 @@ def test_grounded_body_reports_no_sweep_block_but_keeps_its_data():
 
 
 def test_region_choices_are_grouped_by_body():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     choices = ui_inputs.region_choices(a)
     assert set(choices) == {"plate", "tank_a", "tank_b"}
     assert "band_a" in choices["tank_a"]
@@ -158,7 +160,7 @@ def test_region_choices_are_grouped_by_body():
 def test_retargeting_a_rod_end_resets_q_into_the_new_region_bounds():
     """Topology is a user input; moving an end to a different region must
     leave a valid q, not a stale one of the wrong length."""
-    a = examples.mixed_region_assembly()
+    a = mixed_region_assembly()
     ui_inputs.set_rod_end_region(a, "r_patch", "a", "arc1d")
     a.validate()
     rod = a.rods["r_patch"]
@@ -168,7 +170,7 @@ def test_retargeting_a_rod_end_resets_q_into_the_new_region_bounds():
 
 
 def test_retargeting_to_a_fixed_point_leaves_an_empty_q():
-    a = examples.mixed_region_assembly()
+    a = mixed_region_assembly()
     ui_inputs.set_rod_end_region(a, "r_patch", "a", "fixed0d")
     assert a.rods["r_patch"].end_a.q.size == 0
     a.validate()
@@ -197,7 +199,7 @@ def test_ui_inputs_pure_helpers_do_not_need_streamlit_state():
 
 
 def test_rods_with_design_vars_skips_fully_fixed_rods():
-    a = examples.mixed_region_assembly()
+    a = mixed_region_assembly()
     # r_fixed spans a FixedPoint and a PlanarPatch, so it still has 2 vars
     assert ui_inputs.rods_with_design_vars(a) == ["r_fixed", "r_patch"]
 
@@ -207,7 +209,7 @@ def test_rods_with_design_vars_skips_fully_fixed_rods():
 
 
 def test_apply_rod_q_writes_only_the_named_rod():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     before = a.design_vector().copy()
     ui_inputs.apply_rod_q(a, "rod_a0", [1.0, 20.0, 8.0, 1.0])
 
@@ -220,7 +222,7 @@ def test_apply_rod_q_writes_only_the_named_rod():
 
 
 def test_apply_rod_q_rejects_a_wrong_length():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     with pytest.raises(ValueError):
         ui_inputs.apply_rod_q(a, "rod_a0", [1.0, 2.0])
 
@@ -232,14 +234,14 @@ def test_apply_rod_q_rejects_a_wrong_length():
 
 
 def test_every_rod_reports_which_spec_it_matches():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     spec = al.ROD_SPECS['1/2" alloy steel']
     ui_inputs.assign_spec(a, spec, list(a.rods))
     assert ui_inputs.spec_assignments(a) == {r: spec.name for r in a.rods}
 
 
 def test_a_rod_that_matches_no_spec_reads_as_custom():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     ui_inputs.assign_spec(a, al.ROD_SPECS['1/2" alloy steel'], list(a.rods))
     a.rods["rod_a0"].A *= 1.37
     assert ui_inputs.spec_assignments(a)["rod_a0"] == ui_inputs.CUSTOM
@@ -247,7 +249,7 @@ def test_a_rod_that_matches_no_spec_reads_as_custom():
 
 
 def test_assigning_a_spec_touches_only_the_named_rods():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     before = {r: a.rods[r].A for r in a.rods}
     ui_inputs.assign_spec(a, al.ROD_SPECS['5/8" alloy steel'], ["rod_a0", "rod_b2"])
     for rod_id, rod in a.rods.items():
@@ -260,7 +262,7 @@ def test_assigning_a_spec_touches_only_the_named_rods():
 def test_assigning_a_spec_gives_the_rod_a_tension_allowable():
     """The point of the editor: without Ftu/A_net a rod is checked in
     compression only, and that looks identical to a complete margin."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     for rod in a.rods.values():
         rod.Ftu = rod.A_net = rod.P_tension_allow = None
     assert sw.run_sweep(a).incomplete_rods
@@ -269,13 +271,13 @@ def test_assigning_a_spec_gives_the_rod_a_tension_allowable():
 
 
 def test_assigning_an_unknown_rod_raises():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     with pytest.raises(KeyError):
         ui_inputs.assign_spec(a, al.ROD_SPECS['3/8" alloy steel'], ["nope"])
 
 
 def test_manual_overrides_write_only_what_they_are_given():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     rod = a.rods["rod_a0"]
     before = (rod.E, rod.I, rod.Fcy)
     ui_inputs.apply_rod_properties(rod, A=0.25, P_tension_allow=9000.0)
@@ -286,7 +288,7 @@ def test_manual_overrides_write_only_what_they_are_given():
 def test_a_manual_override_can_clear_an_optional_allowable():
     """Clearing a vendor rating must fall back to A_net*Ftu, not keep a stale
     number that no longer reflects what the engineer entered."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     rod = a.rods["rod_a0"]
     ui_inputs.apply_rod_properties(rod, P_tension_allow=9000.0)
     assert al.tension_allowable(rod).value == 9000.0
@@ -301,3 +303,107 @@ def test_the_rod_editor_helpers_are_streamlit_free():
                ui_inputs.apply_rod_properties):
         assert "session_state" not in inspect.getsource(fn)
         assert "st." not in inspect.getsource(fn)
+
+
+# ======================================================================
+# Snap the CG to the shell's centre of volume (2026-08-24)
+#
+# Not a convenience: the default `cg = [0, 0, 0]` is WRONG for a cylinder
+# defined by a z range, and wrong in a way that changes the inertial moment
+# about the datum rather than just the picture.
+# ======================================================================
+
+
+def _cyl_body(z_min=0.0, z_max=10.0):
+    from library.tierod.clearance import Cylinder
+    from library.tierod.model import Body, frame_from_axis
+
+    frame = dict(zip(("e1", "e2", "e3"), frame_from_axis("Z")))
+    body = Body("tank", mass=100.0)
+    body.clearance = Cylinder(origin=np.zeros(3), radius=3.0,
+                              z_min=z_min, z_max=z_max, **frame)
+    return body
+
+
+def test_a_cylinder_centroid_is_halfway_along_its_axis_not_its_origin():
+    assert _cyl_body().clearance.centroid()[2] == pytest.approx(5.0)
+
+
+def test_a_sphere_and_a_box_have_their_centroid_at_their_origin():
+    from library.tierod.clearance import Box, Sphere
+    from library.tierod.model import frame_from_axis
+
+    frame = dict(zip(("e1", "e2", "e3"), frame_from_axis("Z")))
+    at = np.array([1.0, 2.0, 3.0])
+    assert np.allclose(Sphere(origin=at, radius=2.0, **frame).centroid(), at)
+    assert np.allclose(
+        Box(origin=at, half_extents=(1.0, 2.0, 3.0), **frame).centroid(), at
+    )
+
+
+def test_the_centroid_follows_the_shell_s_own_frame():
+    from library.tierod.clearance import Cylinder
+    from library.tierod.model import frame_from_axis
+
+    on_x = Cylinder(origin=np.zeros(3), radius=3.0, z_min=0.0, z_max=10.0,
+                    **dict(zip(("e1", "e2", "e3"), frame_from_axis("X"))))
+    assert np.allclose(on_x.centroid(), [5.0, 0.0, 0.0])
+
+
+def test_snapping_moves_the_cg_and_says_that_it_did():
+    body = _cyl_body()
+    assert body.snap_cg_to_shell() is True
+    assert np.allclose(body.cg, [0.0, 0.0, 5.0])
+
+
+def test_snapping_twice_reports_no_second_move():
+    """It overwrites a number the user may have set on purpose, so 'did it
+    move' has to be honest rather than always True."""
+    body = _cyl_body()
+    body.snap_cg_to_shell()
+    assert body.snap_cg_to_shell() is False
+
+
+def test_a_body_with_no_shell_cannot_snap_and_is_left_alone():
+    from library.tierod.model import Body
+
+    body = Body("bare", mass=10.0, cg=np.array([1.0, 2.0, 3.0]))
+    assert body.snap_cg_to_shell() is False
+    assert np.allclose(body.cg, [1.0, 2.0, 3.0])
+
+
+def test_a_symmetric_cylinder_needs_no_snap():
+    assert _cyl_body(z_min=-5.0, z_max=5.0).snap_cg_to_shell() is False
+
+
+def test_the_snap_changes_the_inertial_moment_not_only_the_picture():
+    """Why this is a correctness fix and not a UI nicety: `sweep_block`'s
+    moment rows are built from the CG arm, so moving it changes the wrench."""
+    body = _cyl_body()
+    before = body.sweep_block()
+    body.snap_cg_to_shell()
+    assert not np.allclose(before, body.sweep_block())
+
+
+def test_the_form_offers_the_snap_only_when_there_is_a_shell():
+    from library.tierod.model import Body
+
+    assert ui_inputs.body_form_spec(_cyl_body()).can_snap_cg
+    assert not ui_inputs.body_form_spec(Body("bare")).can_snap_cg
+
+
+def test_the_form_grays_the_cg_inputs_while_snapped():
+    body = _cyl_body()
+    assert not ui_inputs.body_form_spec(body, snap_cg=False).cg_disabled
+    assert ui_inputs.body_form_spec(body, snap_cg=True).cg_disabled
+
+
+def test_the_form_explains_why_a_bare_body_cannot_snap():
+    from library.tierod.model import Body
+
+    assert "no clearance shell" in ui_inputs.body_form_spec(Body("bare")).snap_note.lower()
+
+
+def test_the_form_reports_where_the_snap_would_put_the_cg():
+    note = ui_inputs.body_form_spec(_cyl_body()).snap_note
+    assert "5.00" in note

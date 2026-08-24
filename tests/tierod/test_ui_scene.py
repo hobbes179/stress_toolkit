@@ -21,6 +21,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.tierod.legacy_demo import collinear_plate, mixed_region_assembly, two_tank_demo
+
 from apps.tierod import examples, ui_scene
 from conftest import make_hexapod, make_line_supported
 from library.tierod import mechanisms as mech
@@ -51,7 +53,7 @@ def test_ui_scene_does_not_import_streamlit():
 def test_uirevision_is_constant_across_rebuilds():
     """Streamlit reruns the whole script on every widget change. Without a
     CONSTANT uirevision the camera resets on every slider tick."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     f1 = ui_scene.build_figure(a)
     # move a rod end, exactly as a slider would
     a.rods["rod_a0"].end_a.q = np.array([1.0, 20.0])
@@ -62,14 +64,14 @@ def test_uirevision_is_constant_across_rebuilds():
 
 
 def test_aspectmode_is_data_so_geometry_is_not_distorted():
-    f = ui_scene.build_figure(examples.demo_assembly())
+    f = ui_scene.build_figure(two_tank_demo())
     assert f.layout.scene.aspectmode == "data"
 
 
 def test_static_traces_are_separated_from_rod_traces():
     """Bodies, regions and CG markers never move while the optimizer runs;
     only rod traces are rebuilt per rerun."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     static = ui_scene.static_traces(a)
     rods = ui_scene.rod_traces(a)
     assert len(static) > 0 and len(rods) == len(a.rods)
@@ -87,7 +89,7 @@ def test_static_traces_are_separated_from_rod_traces():
 def test_region_traces_come_from_region_point():
     """The renderer must sample `region.point(q)` — the same function the
     optimizer differentiates — not a parallel geometry implementation."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     traces = ui_scene.region_traces(a)
     assert traces, "regions must render"
 
@@ -115,7 +117,7 @@ def test_region_traces_come_from_region_point():
 def test_region_trace_dimension_matches_the_primitive():
     """2-D regions render as a surface, 1-D as a swept line, 0-D as a marker —
     generated from `ndim`, with no per-type branching in the caller."""
-    a = examples.mixed_region_assembly()
+    a = mixed_region_assembly()
     kinds = {t.name: t.type for t in ui_scene.region_traces(a)}
     assert kinds["patch2d"] == "surface"
     assert kinds["arc1d"] == "scatter3d"
@@ -123,7 +125,7 @@ def test_region_trace_dimension_matches_the_primitive():
 
 
 def test_body_meshes_come_from_the_clearance_primitives():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     meshes = ui_scene.body_mesh_traces(a)
     assert len(meshes) == 3          # plate + two tanks
     for t in meshes:
@@ -133,14 +135,14 @@ def test_body_meshes_come_from_the_clearance_primitives():
 
 
 def test_a_body_without_a_clearance_primitive_is_skipped_not_crashed():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.bodies["tank_a"].clearance = None
     meshes = ui_scene.body_mesh_traces(a)
     assert len(meshes) == 2
 
 
 def test_cg_markers_are_placed_for_free_bodies_only():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     traces = ui_scene.cg_traces(a)
     pts = np.column_stack([np.array([t.x[0], t.y[0], t.z[0]]) for t in traces])
     assert pts.shape[1] == 2, "the grounded plate carries no inertial load"
@@ -155,7 +157,7 @@ def test_cg_markers_are_placed_for_free_bodies_only():
 
 
 def test_rod_traces_span_the_actual_endpoints():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     for trace in ui_scene.rod_traces(a):
         rod = a.rods[trace.name]
         p, q, *_ = a.rod_endpoints(rod)
@@ -164,7 +166,7 @@ def test_rod_traces_span_the_actual_endpoints():
 
 
 def test_rods_are_coloured_by_load_ratio():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     lr = {rod_id: 0.1 + 0.8 * (i / 11.0) for i, rod_id in enumerate(a.rods)}
     traces = {t.name: t for t in ui_scene.rod_traces(a, load_ratios=lr)}
     low = traces[min(lr, key=lr.get)].line.color
@@ -183,7 +185,7 @@ def test_rods_are_coloured_by_load_ratio():
 
 def test_rod_traces_survive_missing_load_ratios():
     """Before a solve there are no ratios; the scene must still draw."""
-    traces = ui_scene.rod_traces(examples.demo_assembly(), load_ratios=None)
+    traces = ui_scene.rod_traces(two_tank_demo(), load_ratios=None)
     assert len(traces) == 12
     assert all(t.line.color is not None for t in traces)
 
@@ -194,7 +196,7 @@ def test_rod_traces_survive_missing_load_ratios():
 
 
 def test_mechanism_figure_has_frames_and_a_play_control():
-    a = examples.collinear_plate()
+    a = collinear_plate()
     asm = assemble(a)
     mode = mech.null_modes(asm)[0]
     fig = ui_scene.mechanism_figure(a, mode, n_frames=16)
@@ -207,7 +209,7 @@ def test_mechanism_figure_has_frames_and_a_play_control():
 def test_animation_moves_bodies_rigidly_and_keeps_rods_attached():
     """A mode animation that detaches a rod from its body is worse than no
     animation: it shows a motion the layout does not permit."""
-    a = examples.collinear_plate()
+    a = collinear_plate()
     asm = assemble(a)
     mode = mech.null_modes(asm)[0]
 
@@ -228,7 +230,7 @@ def test_animation_moves_bodies_rigidly_and_keeps_rods_attached():
 
 
 def test_animation_amplitude_zero_is_the_undeformed_layout():
-    a = examples.collinear_plate()
+    a = collinear_plate()
     mode = mech.null_modes(assemble(a))[0]
     moved = ui_scene.displaced_endpoints(a, mode, amplitude=0.0, phase=0.3)
     for rod_id, (p, q) in moved.items():
@@ -239,7 +241,7 @@ def test_animation_amplitude_zero_is_the_undeformed_layout():
 def test_the_collinear_plate_animates_rotation_about_the_plate_line():
     """The Session 4 gate case. The motion shown must be rotation about the
     ground line, and the cause must be named in words."""
-    a = examples.collinear_plate()
+    a = collinear_plate()
     report = mech.check(a)
     assert not report.ok
     assert report.nullity == 1
@@ -283,7 +285,7 @@ def test_the_collinear_plate_animates_rotation_about_the_plate_line():
 
 
 def test_mechanism_figure_handles_a_multi_body_mode():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     del a.rods["rod_a0"]
     del a.rods["rod_b0"]
     modes = mech.null_modes(assemble(a))
@@ -298,7 +300,7 @@ def test_mechanism_figure_handles_a_multi_body_mode():
 
 
 def test_demo_assembly_is_valid_and_solvable():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     a.validate()
     report = mech.check(a)
     assert report.graph.ok
@@ -307,7 +309,7 @@ def test_demo_assembly_is_valid_and_solvable():
 
 
 def test_collinear_plate_is_the_documented_failure_case():
-    a = examples.collinear_plate()
+    a = collinear_plate()
     a.validate()
     assert mech.check(a).nullity >= 1
 
@@ -327,7 +329,7 @@ def test_every_example_builds_a_figure():
 
 
 def test_the_cone_sits_at_the_rod_midpoint_and_points_along_n_hat():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     d = np.array([0.0, 0.6, -0.8])
     (cone,) = ui_scene.worst_direction_traces(a, "rod_a0", d)
 
@@ -343,20 +345,20 @@ def test_the_cone_sits_at_the_rod_midpoint_and_points_along_n_hat():
 def test_the_cone_direction_is_normalized_before_scaling():
     """An unnormalized n_hat would make the glyph length report the load
     magnitude, which it is not — the cone shows a DIRECTION."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     short = ui_scene.worst_direction_traces(a, "rod_a0", [0.0, 0.0, 1.0])[0]
     long = ui_scene.worst_direction_traces(a, "rod_a0", [0.0, 0.0, 900.0])[0]
     assert short.w[0] == pytest.approx(long.w[0])
 
 
 def test_a_rod_with_no_worst_direction_gets_no_cone():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     assert ui_scene.worst_direction_traces(a, "rod_a0", np.zeros(3)) == []
     assert ui_scene.worst_direction_traces(a, "not_a_rod", [0, 0, 1.0]) == []
 
 
 def test_the_cone_is_only_added_when_asked_for():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     plain = ui_scene.build_figure(a)
     with_cone = ui_scene.build_figure(
         a, worst_direction=("rod_a0", np.array([0.0, 0.0, 1.0]))
@@ -367,7 +369,7 @@ def test_the_cone_is_only_added_when_asked_for():
 
 
 def test_the_cone_does_not_disturb_the_camera_revision():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     fig = ui_scene.build_figure(
         a, worst_direction=("rod_a0", np.array([1.0, 0.0, 0.0]))
     )

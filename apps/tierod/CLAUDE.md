@@ -157,6 +157,17 @@ anything.
 - [x] Session 8 — layout search (`library/tierod/optimize.py`,
       `tests/tierod/test_optimize.py`) — 2026-08-22, 482 tests green.
       seed -> refine -> score -> rank, with the N-vs-lambda trade curve.
+- [x] Session 9 — construction UI (`apps/tierod/ui_build.py`,
+      `tests/tierod/test_ui_build.py`) — 2026-08-23, 767 tests green.
+- [x] Session 10 — layout-search UI (`apps/tierod/ui_search.py`,
+      `tests/tierod/test_ui_search.py`) — 2026-08-23, 824 tests green.
+      The engine had existed since Session 8 with zero callers in `apps/`.
+- [x] Session 10b — owner feedback: rod-count floor, "Most rods", live
+      visualization — 2026-08-23, 824 tests green.
+- [x] Session 10c — interference check + gate (`library/tierod/clash.py`,
+      `tests/tierod/test_clash.py`), CG snap, demos rewritten
+      (`apps/tierod/examples.py`, `tests/tierod/{test_examples,legacy_demo}.py`)
+      — 2026-08-24, 933 tests green.
 
 ## Pre-commit cleanup (2026-08-23)
 
@@ -219,6 +230,112 @@ misses, both closed. 824 tests green.
   survived a `>= 2` chart count. Both now assert exact values, and the chart
   count carries a comment naming all three charts so the next person updates
   it on purpose.
+
+## Session 10c — interference, CG snap, new demos (2026-08-23/24)
+
+Four owner asks, in one round. 32 mutations seeded, 26 caught first pass, 6
+missed — 5 real gaps closed, 1 documented equivalent mutant. 933 tests green.
+
+### `library/tierod/clash.py` — the interference engine
+
+- **Scope is rod↔body and rod↔rod. Rod↔region is deliberately NOT checked** —
+  the owner's call. A region is a declared mounting *surface*, so a rod
+  touching one is the normal case, not a fault.
+- **Signed** distance, not distance. Measured on a cylinder r=3, the unsigned
+  field reads 0.0 for a point on the surface, a point at the centre, a rod
+  skimming the wall and a rod driven straight through it — four states, one
+  number, useless for collision. `signed_clearance()` is positive outside and
+  negative inside, so depth is a real quantity.
+- **Sampled along the rod, with a Lipschitz correction.** An SDF is 1-Lipschitz,
+  so the sampled minimum minus half the sample spacing is a genuine lower
+  bound, not an estimate. That is what makes 33 samples defensible.
+- **The margin applies only to pairs that are NOT attached.** Applying it
+  everywhere made every rod appear to penetrate its own mounting face by
+  exactly the margin, and took the shipped demo from clean to 12 interferences.
+  A rod is allowed to touch the body it is bolted to; it is not allowed to
+  touch anything else.
+- **Two rods sharing a pin are not a clash.** A bipod or hexapod pair meeting
+  at one fitting is normal hardware, and the first version condemned three
+  shipped fixtures for it. `_trim_shared_ends` pulls co-mounted rods back from
+  the shared pin by the clearance they need, and the step is **clamped to
+  0.49·length** so a rod shorter than its required gap is not turned inside
+  out. Five of the six surviving mutations were in these ~20 lines.
+- **Performance was the constraint, not correctness.** The first version cost
+  6.09 ms against `layout_metrics`' 0.51 ms — a 12× tax on the inner loop of a
+  search that already runs for minutes. Profiling put 0.38 ms/call in a
+  golden-section `distance_to_segment`; vectorized, the whole check is
+  **0.68 ms**.
+
+### The gate
+
+- `Criteria.min_gap` (default 0.25 in) turns the check on; `None` turns it off.
+  **`feasible` consults the criteria** — the first version gated on
+  `metrics.interferes` alone, so switching the check off had no effect.
+- The opposite error is the dangerous one, so it **raises**: criteria that
+  demand a check, handed metrics computed without one, get a `ValueError`.
+  Silence there hands back layouts with rods through tanks.
+- `worst_clash` is three-valued — `None` (not checked), `0.0` (clear), `>0`
+  (shortfall in inches) — and the UI says which. "Not checked" must never
+  render as "clear".
+- `check_failsafe` passes its own `criteria.min_gap` down to `layout_metrics`;
+  it previously built metrics at a different gap from the criteria judging them.
+- The surrogate gained a **linear** clearance penalty scaled by `min_gap`, so
+  the refiner walks out of a clash instead of being told only that it is bad.
+
+**Why this is a hard gate and not a report.** Measured on the old demo, 32
+layouts, everything else identical:
+
+| | best lambda | sum L | clash shortfall | time |
+|---|---|---|---|---|
+| clearance off | 107 (16 rods) | 109 | **0.625 in — unbuildable** | 211 s |
+| clearance on | 239 (14 rods) | 250 | 0.000 | 467 s |
+
+The unchecked search does not merely allow the clash — it *prefers* it. Routing
+through a body is a shortcut, and shortcuts win on both length and slenderness.
+It costs about 2× the runtime to not do that.
+
+### CG snap
+
+`Body.shell_centroid()` / `snap_cg_to_shell()`, with a checkbox in the body
+editor that grays the cg inputs. `snap_cg_to_shell` returns True only if the cg
+actually moved, so a caller can tell "snapped" from "already there".
+`ClearancePrimitive.centroid()` needed a real per-type `_centroid_local` for
+this — the base returns zeros, and **Cylinder overrides it**, because a
+cylinder spanning z_min..z_max has its centre of volume at the midpoint, not at
+the origin of its frame.
+
+### Demos rewritten
+
+The owner scrapped the old set. Three new ones, **every geometry probed
+numerically before it was written down** — parameters swept, rank and
+interference measured, winning values frozen:
+
+- `payload_deck()` (default) — 3 bodies over a ground deck, 21 rods against 18
+  DOF, rank 18/18, sigma_min 0.133, clash-free, fail-safe. Redundant by three
+  on purpose: a bare 18-rod set is determinate and can never be fail-safe.
+- `mechanism_turntable()` — 6 radial coplanar spokes, **rank 3 of 6**. Same rod
+  count as a working hexapod, half the restraint.
+- `clash_gantry()` — full rank, sound load path, 3 interferences. Every
+  strength number reports happily and it is still unbuildable.
+
+Two sweep findings are recorded inline in `examples.py` because they are easy
+to re-introduce: a hexapod whose base twist equals its top twist collapses to
+**rank 9 of 18**, and overlapping ground rings put rods from different clusters
+through each other.
+
+**`tests/tierod/legacy_demo.py`** is a frozen copy of the OLD demo geometry.
+Scrapping the demos broke 69 tests that were keyed to region names like
+`band_a`. The lesson is that **fixtures and demos have different jobs**: a demo
+is a moving illustration of the current tool, a fixture is a fixed thing to
+measure against, and 69 tests had been quietly relying on one to be the other.
+
+### `.claude/settings.json`
+
+Prefix allow-rules so a test run does not need a click. Two things to know: the
+file is read at **session start**, so creating it mid-session does nothing; and
+a rule matches a command *prefix*, so heredocs and `a && b` chains match
+nothing and are each a unique string to approve. Write a script to a file, run
+it with one plain command.
 
 ## Session 10 as-built notes
 
@@ -628,6 +745,19 @@ group is sized as a unit; per-rod free choice was rejected as unbuildable.
   test files.
 
 Deviations from plan (note here with date and reason):
+- 2026-08-24 — **`library/tierod/clash.py` is a new module the plan does not
+  list.** The plan's feasibility constraint says "no penetration" but assigns it
+  to nothing. It is a geometry kernel, not a scoring rule, so it sits beside
+  `clearance.py` rather than inside `failsafe.py`, and `failsafe.py` consumes it.
+- 2026-08-24 — **rod↔region interference is NOT checked**, by the owner's
+  decision (2026-08-23). Regions are declared mounting surfaces; a rod touching
+  one is the intent.
+- 2026-08-24 — the old demos were **replaced, not kept alongside**. The owner
+  reversed an earlier "don't delete the old demos" the same day. Their geometry
+  survives as `tests/tierod/legacy_demo.py` because 69 tests were keyed to it.
+- 2026-08-24 — `Region.keepouts` remains a **dead field, read by nothing**.
+  Interference is computed from body clearance shells and rod segments instead.
+  Left in place rather than removed mid-round; decide it deliberately later.
 - 2026-08-22 — `Rod.Fty` added (optional, defaults None) so the tension yield check is
   a real check rather than a plumbed-but-unused safety factor. The owner asked for SF
   input cells with defaults; two factors with only one live check would have been half

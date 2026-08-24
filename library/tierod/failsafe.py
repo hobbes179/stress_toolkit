@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from library.tierod import allowables as al
+from library.tierod import clash
 from library.tierod import sweep as sw
 from library.tierod.cases import LoadCase, generate_cases
 from library.tierod.kernel import Assembled, SingularAssemblyError, assemble
@@ -73,6 +74,7 @@ __all__ = [
     "RHO_TOL",
     "Redundancy",
     "LayoutMetrics",
+    "MIN_GAP_DEFAULT",
     "Criteria",
     "Verdict",
     "FailureState",
@@ -193,6 +195,13 @@ class LayoutMetrics:
     rho2: np.ndarray
     rod_ids: list[str] = field(default_factory=list)
 
+    #: Worst clearance shortfall in inches, or **None meaning NOT CHECKED**.
+    #: The distinction matters: 0.0 is a positive statement that nothing
+    #: interferes, None is the absence of a statement, and a gate that treats
+    #: them alike would pass clashing layouts in silence.
+    worst_clash: float | None = None
+    clashes: tuple = ()
+
     # -- mechanism ------------------------------------------------------
 
     @property
@@ -244,13 +253,30 @@ class LayoutMetrics:
     def survives_single_loss(self) -> bool:
         return not self.is_mechanism and self.rho2_min > RHO_TOL
 
+    @property
+    def interferes(self) -> bool:
+        """True only when clearance was checked AND something clashes."""
+        return self.worst_clash is not None and self.worst_clash > 0.0
 
-def layout_metrics(assembly: Assembly, asm: Assembled | None = None) -> LayoutMetrics:
+
+def layout_metrics(assembly: Assembly, asm: Assembled | None = None,
+                   min_gap: float | None = clash.MIN_GAP_DEFAULT) -> LayoutMetrics:
     """Score a candidate layout. Never raises on a mechanism — a search
-    generates those constantly and needs them ranked last, not fatal."""
+    generates those constantly and needs them ranked last, not fatal.
+
+    `min_gap` controls the physical-interference check and defaults to the
+    same value `Criteria` does, so the natural `feasible(layout_metrics(a))`
+    is checked. Interference costs about as much again as everything else
+    here; pass `min_gap=None` to skip it, which is then a DELIBERATE choice
+    rather than something that happens by forgetting an argument. `feasible`
+    raises if criteria demand a gap the metrics never measured.
+    """
     if asm is None:
         asm = assemble(assembly)
     s, rho2, rank = _spectrum(asm.nondim_screws(), asm.n_rods)
+
+    report = (None if min_gap is None
+              else clash.check_clearance(assembly, min_gap=float(min_gap)))
 
     lambdas = np.zeros(asm.n_rods)
     crits = []
@@ -280,6 +306,8 @@ def layout_metrics(assembly: Assembly, asm: Assembled | None = None) -> LayoutMe
         lambda_crit=float(np.min(crits)) if crits else float("inf"),
         rho2=rho2,
         rod_ids=list(asm.rod_ids),
+        worst_clash=None if min_gap is None else report.worst_shortfall,
+        clashes=() if min_gap is None else report.clashes,
     )
 
 
@@ -306,6 +334,12 @@ class Criteria:
     damaged_load_factor: float = 1.0
     require_single_failure: bool = True
     max_lambda: float | None = None        # optional hard slenderness cap
+
+    #: Minimum clearance between things that are not bolted together, inches.
+    #: `None` switches the interference check off entirely — which is a
+    #: deliberate choice a caller has to make, not something that can happen by
+    #: forgetting to pass a number.
+    min_gap: float | None = clash.MIN_GAP_DEFAULT
 
 
 @dataclass(frozen=True)
@@ -347,6 +381,27 @@ def feasible(metrics: LayoutMetrics, criteria: Criteria | None = None) -> Verdic
                 f"mechanism (rho^2 = 0). {metrics.n_rods} rods present, "
                 f"{need} is the minimum that can be fail-safe"
             )
+
+    if criteria.min_gap is not None and metrics.worst_clash is None:
+        # The dangerous silence: criteria demand clearance, metrics never
+        # measured it, and a gate that shrugged here would hand back layouts
+        # with rods through tanks. Loud, because it is a wiring error.
+        raise ValueError(
+            "criteria require a clearance check (min_gap="
+            f"{criteria.min_gap}) but these metrics were computed without one. "
+            "Pass min_gap=criteria.min_gap to layout_metrics()."
+        )
+
+    # `criteria.min_gap is None` means the caller switched interference off.
+    # Metrics computed WITH a check must then not be gated on it, or turning
+    # the check off in criteria would have no effect whenever the metrics
+    # happened to measure it anyway.
+    if criteria.min_gap is not None and metrics.interferes:
+        worst = min(metrics.clashes, key=lambda c: c.gap)
+        reasons.append(
+            f"interference: {worst.message()} "
+            f"({len(metrics.clashes)} clashing pair(s) in total)"
+        )
 
     if criteria.max_lambda is not None and metrics.max_lambda > criteria.max_lambda:
         reasons.append(
@@ -464,7 +519,9 @@ def check_failsafe(
     """
     criteria = criteria or Criteria()
     asm = assemble(assembly)
-    metrics = layout_metrics(assembly, asm)
+    # Pass the criteria's own gap down, so a report cannot be built on metrics
+    # that measured interference differently from the criteria judging them.
+    metrics = layout_metrics(assembly, asm, min_gap=criteria.min_gap)
     all_rods = list(asm.rod_ids)
 
     intact_rod = intact_margin = None

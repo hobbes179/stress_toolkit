@@ -24,6 +24,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.tierod.legacy_demo import two_tank_demo
+
 from apps.tierod import examples, ui_results
 from library.tierod import allowables as al
 from library.tierod import sweep as sw
@@ -192,7 +194,7 @@ def test_the_scene_colouring_comes_straight_from_the_result(result):
 def test_the_demo_assembly_sweeps_and_reports_margins():
     """Push-1 definition of done: the saved demo loads, solves and reports
     margins end to end."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     result = sw.run_sweep(a)
     assert len(result.rows) == 12
     assert result.incomplete_rods == []
@@ -205,6 +207,6 @@ def test_the_demo_assembly_sweeps_and_reports_margins():
 def test_the_demo_is_buckling_driven_as_the_spec_predicts():
     """§7.2: a symmetric sweep reaches both senses, so the weaker allowable
     governs — for slender tie rods that is compression, every time."""
-    result = sw.run_sweep(examples.demo_assembly())
+    result = sw.run_sweep(two_tank_demo())
     assert all(row.sense == "C" for row in result.rows)
     assert all("column" in row.allowable_source for row in result.rows)

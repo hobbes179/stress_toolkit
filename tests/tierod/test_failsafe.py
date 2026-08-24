@@ -30,7 +30,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apps.tierod import examples
+from tests.tierod.legacy_demo import two_tank_demo
 from library.tierod import allowables as al
 from library.tierod import failsafe as fs
 from library.tierod import sweep as sw
@@ -113,7 +113,7 @@ def test_the_demo_is_determinate_and_therefore_never_fail_safe():
     """12 rods against 12 DOF. No load case and no rod section can fix that —
     it is a counting result, and the tool should say so before anyone sizes
     anything."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     asm = assemble(a)
     assert asm.n_rods == asm.n_dof == 12
     assert fs.min_rods_for_single_failure(asm.n_free) == 13
@@ -133,7 +133,7 @@ def test_the_counting_bounds():
 
 
 def test_layout_metrics_report_slenderness_not_just_length():
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     m = fs.layout_metrics(a)
     assert m.n_rods == 12
     assert m.total_length == pytest.approx(float(assemble(a).lengths.sum()))
@@ -149,7 +149,7 @@ def test_layout_metrics_count_the_rods_past_the_buckling_knee():
     """Below lambda_crit a rod is on the Johnson branch and barely buckling
     limited; above it the allowable falls as 1/lambda^2. The count of Euler
     rods is the headline the objective is trying to drive to zero."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     m = fs.layout_metrics(a)
     assert m.n_euler == 12, "every demo rod is past the knee"
     assert m.euler_fraction == pytest.approx(1.0)
@@ -193,8 +193,8 @@ def test_shortening_the_demo_improves_slenderness_and_conditioning_together():
     """The finding that motivated this whole reframing: the shipped layout is
     DOMINATED. Moving the same rods within the same declared regions cuts max
     lambda roughly in half and doubles sigma_min at the same time."""
-    shipped = fs.layout_metrics(examples.demo_assembly())
-    short = fs.layout_metrics(_reposition(examples.demo_assembly(), 10.0, 5.0, 9.0))
+    shipped = fs.layout_metrics(two_tank_demo())
+    short = fs.layout_metrics(_reposition(two_tank_demo(), 10.0, 5.0, 9.0))
 
     assert short.max_lambda < 0.6 * shipped.max_lambda
     assert short.sigma_min > 1.9 * shipped.sigma_min
@@ -204,7 +204,7 @@ def test_shortening_the_demo_improves_slenderness_and_conditioning_together():
 def test_pushing_every_attachment_to_one_height_collapses_the_layout():
     """The cliff on the other side. Short is good until the moment arms vanish
     — which is why sigma_floor has to be a hard constraint, not a diagnostic."""
-    flat = fs.layout_metrics(_reposition(examples.demo_assembly(), 4.5, 4.5, 7.0))
+    flat = fs.layout_metrics(_reposition(two_tank_demo(), 4.5, 4.5, 7.0))
     assert flat.max_lambda < 70.0, "it is indeed short"
     assert flat.is_mechanism and flat.rank == 6
 
@@ -304,6 +304,22 @@ def test_a_named_subset_can_be_checked_instead_of_every_singleton():
 
 # ======================================================================
 # Feasibility — the gate a layout search filters on
+# These fixtures are hand-built hexapods and frames from before the clearance
+# check existed, and several are physically tight (0.568 in between rods that
+# now want 0.625 in). That is a correct finding about the fixtures, not about
+# the load path — and the load path is what this file tests. So the tests below
+# opt out of interference explicitly with `min_gap=None`, which is exactly the
+# deliberate choice the API asks for rather than something that can be omitted
+# by accident. `test_clash.py` and the interference tests at the end of this
+# file cover clearance itself.
+NO_GAP = dict(min_gap=None)
+
+
+def _lp(assembly):
+    """Load-path metrics: everything except the interference check."""
+    return fs.layout_metrics(assembly, **NO_GAP)
+
+
 # ======================================================================
 
 
@@ -321,7 +337,7 @@ def test_the_rank_and_conditioning_reasons_are_distinguishable():
     the messages must not be confusable with each other."""
     rank_fail = fs.feasible(fs.layout_metrics(make_line_supported()), fs.Criteria())
     fragile = fs.feasible(
-        fs.layout_metrics(_reposition(examples.demo_assembly(), 5.0, 4.5, 7.0)),
+        fs.layout_metrics(_reposition(two_tank_demo(), 5.0, 4.5, 7.0)),
         fs.Criteria(sigma_floor=0.10, require_single_failure=False),
     )
     assert any(r.startswith("mechanism:") for r in rank_fail.reasons)
@@ -339,7 +355,7 @@ def test_the_sigma_floor_rejects_a_barely_stable_layout():
     """The all-short-but-not-quite-flat variant is technically full rank and
     genuinely fragile — sigma_min 0.04. A floor is what keeps a length-hungry
     search off that cliff."""
-    m = fs.layout_metrics(_reposition(examples.demo_assembly(), 5.0, 4.5, 7.0))
+    m = fs.layout_metrics(_reposition(two_tank_demo(), 5.0, 4.5, 7.0))
     assert not m.is_mechanism
     assert fs.feasible(m, fs.Criteria(sigma_floor=0.10)).ok is False
     assert any(
@@ -350,8 +366,9 @@ def test_the_sigma_floor_rejects_a_barely_stable_layout():
 
 def test_a_redundant_well_conditioned_layout_passes_the_cheap_screen():
     verdict = fs.feasible(
-        fs.layout_metrics(make_symmetric8()),
-        fs.Criteria(sigma_floor=0.01, require_single_failure=True),
+        _lp(make_symmetric8()),
+        fs.Criteria(sigma_floor=0.01, require_single_failure=True,
+                    min_gap=None),
     )
     assert verdict.ok, verdict.reasons
 
@@ -360,12 +377,13 @@ def test_a_damaged_margin_below_the_requirement_fails_the_report():
     """The strength half of fail-safe, not just the structural half: surviving
     as a structure is not the same as surviving with margin."""
     a = _steel(make_symmetric8())
-    lenient = fs.check_failsafe(a, fs.Criteria(sigma_floor=0.01))
+    lenient = fs.check_failsafe(a, fs.Criteria(sigma_floor=0.01, min_gap=None))
     assert lenient.ok
     worst = lenient.damaged_worst_margin
 
     strict = fs.check_failsafe(
-        a, fs.Criteria(sigma_floor=0.01, ms_required_damaged=worst + 1.0)
+        a, fs.Criteria(sigma_floor=0.01, ms_required_damaged=worst + 1.0,
+                       min_gap=None)
     )
     assert not strict.ok
     assert strict.damaged_worst_margin == pytest.approx(worst)
@@ -383,14 +401,18 @@ def test_an_intact_margin_below_the_requirement_also_fails_the_report():
 
 
 def test_the_screen_can_be_relaxed_for_a_nominal_only_study():
-    m = fs.layout_metrics(make_hexapod())
-    assert fs.feasible(m, fs.Criteria(require_single_failure=False)).ok
+    m = fs.layout_metrics(make_hexapod(), min_gap=None)
+    assert fs.feasible(
+        m, fs.Criteria(require_single_failure=False, min_gap=None)
+    ).ok
 
 
 def test_reasons_are_specific_enough_to_act_on():
     verdict = fs.feasible(fs.layout_metrics(make_hexapod()), fs.Criteria())
     joined = " ".join(verdict.reasons)
     assert "6" in joined and "7" in joined, "say how many rods are needed"
+
+
 
 
 # ======================================================================
@@ -402,7 +424,7 @@ def test_the_objective_ranks_slenderness_first_then_length_then_count():
     """The demo is determinate, so a fail-safe screen rejects both variants
     before slenderness is even consulted — this is a nominal-only comparison."""
     nominal = fs.Criteria(require_single_failure=False)
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     shipped = fs.objective(fs.layout_metrics(a), nominal)
     short = fs.objective(fs.layout_metrics(_reposition(a, 10.0, 5.0, 9.0)), nominal)
 
@@ -413,7 +435,7 @@ def test_the_objective_ranks_slenderness_first_then_length_then_count():
 def test_the_objective_refuses_to_rank_a_layout_it_would_reject():
     """The demo scores `inf` under the default (fail-safe) criteria however
     short its rods are — feasibility is a gate, not a term."""
-    a = examples.demo_assembly()
+    a = two_tank_demo()
     assert fs.objective(fs.layout_metrics(a))[0] == float("inf")
     assert fs.objective(fs.layout_metrics(_reposition(a, 10.0, 5.0, 9.0)))[0] == float(
         "inf"
@@ -421,8 +443,8 @@ def test_the_objective_refuses_to_rank_a_layout_it_would_reject():
 
 
 def test_the_objective_is_a_tuple_so_ties_break_deterministically():
-    m = fs.layout_metrics(make_symmetric8())
-    obj = fs.objective(m)
+    m = _lp(make_symmetric8())
+    obj = fs.objective(m, fs.Criteria(min_gap=None))
     assert isinstance(obj, tuple) and len(obj) == 3
     assert obj[0] == pytest.approx(m.max_lambda)
     assert obj[1] == pytest.approx(m.total_length)
@@ -430,9 +452,10 @@ def test_the_objective_is_a_tuple_so_ties_break_deterministically():
 
 
 def test_an_infeasible_layout_never_outranks_a_feasible_one():
-    good = fs.layout_metrics(make_symmetric8())
-    bad = fs.layout_metrics(make_line_supported())
-    assert fs.objective(bad) > fs.objective(good)
+    criteria = fs.Criteria(min_gap=None)
+    good = _lp(make_symmetric8())
+    bad = _lp(make_line_supported())
+    assert fs.objective(bad, criteria) > fs.objective(good, criteria)
 
 
 def test_an_unsolvable_failure_state_fails_the_report():
@@ -442,7 +465,7 @@ def test_an_unsolvable_failure_state_fails_the_report():
     and 12 of its 28 two-rod losses do go singular — that is the case where a
     state is unsolvable while the intact layout screens clean."""
     a = _steel(make_symmetric8())
-    criteria = fs.Criteria(sigma_floor=0.01)
+    criteria = fs.Criteria(sigma_floor=0.01, min_gap=None)
 
     survivable = fs.check_failsafe(a, criteria, subsets=[("leg0", "brace1")])
     assert all(s.ok for s in survivable.states)
@@ -474,3 +497,76 @@ def test_two_rod_damage_sets_are_the_same_machinery_as_singletons():
     report = fs.check_failsafe(a, fs.Criteria(sigma_floor=0.01), subsets=pairs)
     assert len(report.states) == 28
     assert sum(1 for s in report.states if not s.ok) == 12
+
+
+# ======================================================================
+# Interference in the gate (2026-08-24)
+# ======================================================================
+
+
+def _clashing():
+    from apps.tierod import examples
+
+    return examples.clash_gantry()
+
+
+def test_a_clashing_layout_is_infeasible():
+    verdict = fs.feasible(
+        fs.layout_metrics(_clashing()),
+        fs.Criteria(require_single_failure=False),
+    )
+    assert not verdict.ok
+    assert any(r.startswith("interference") for r in verdict.reasons)
+
+
+def test_the_reason_names_the_offending_pair_and_the_number():
+    verdict = fs.feasible(
+        fs.layout_metrics(_clashing()),
+        fs.Criteria(require_single_failure=False),
+    )
+    reason = next(r for r in verdict.reasons if r.startswith("interference"))
+    assert "cross" in reason and "mast" in reason and "in" in reason
+
+
+def test_switching_clearance_off_in_criteria_actually_switches_it_off():
+    """The bug this pins: `feasible` gated on `metrics.interferes` without
+    consulting the criteria, so metrics that happened to measure interference
+    were judged on it even when the caller had asked not to. Turning a check
+    off must turn it off.
+    """
+    measured = fs.layout_metrics(_clashing(), min_gap=0.25)
+    assert measured.worst_clash > 0.0, "fixture must actually clash"
+    verdict = fs.feasible(
+        measured, fs.Criteria(require_single_failure=False, min_gap=None)
+    )
+    assert verdict.ok, verdict.reasons
+
+
+def test_criteria_demanding_a_check_refuse_metrics_that_skipped_it():
+    """The opposite error, and the dangerous one: silence here would hand back
+    layouts with rods through tanks."""
+    unmeasured = fs.layout_metrics(_clashing(), min_gap=None)
+    with pytest.raises(ValueError, match="without one"):
+        fs.feasible(unmeasured, fs.Criteria(min_gap=0.25))
+
+
+def test_check_failsafe_measures_interference_the_way_its_criteria_ask():
+    """`check_failsafe` builds its own metrics. If it used a different gap
+    from the criteria judging them, the report would be self-inconsistent."""
+    report = fs.check_failsafe(
+        _clashing(), fs.Criteria(require_single_failure=False, min_gap=None)
+    )
+    assert report.metrics.worst_clash is None
+
+    checked = fs.check_failsafe(
+        _clashing(), fs.Criteria(require_single_failure=False, min_gap=0.25)
+    )
+    assert checked.metrics.worst_clash > 0.0
+    assert not checked.ok
+
+
+def test_metrics_distinguish_unchecked_from_clear():
+    from apps.tierod import examples
+
+    assert fs.layout_metrics(examples.payload_deck(), min_gap=None).worst_clash is None
+    assert fs.layout_metrics(examples.payload_deck()).worst_clash == 0.0

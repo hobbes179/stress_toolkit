@@ -291,6 +291,21 @@ Consequences for the sketch below:
   chosen candidate into the live model. See `apps/tierod/CLAUDE.md`
   "Session 10 as-built notes".
 
+- **Session 10c turned "no penetration" into code** (`library/tierod/clash.py`).
+  The §8.2 constraint list carried a non-penetration line from the start but
+  never assigned it to a module, so nothing enforced it. It is now a signed
+  distance field sampled along each rod with a Lipschitz correction, wired into
+  `Criteria.min_gap` as a **hard feasibility gate** — the owner's decision
+  (2026-08-23), scope rod↔body and rod↔rod only.
+
+  The measurement that settled gate-vs-report: on identical inputs, the
+  unchecked search does not merely tolerate a clash, it **prefers** one (best
+  λ 107 with a 0.625 in penetration, vs λ 239 clean), because routing through a
+  body is a shortcut and shortcuts win on length and slenderness alike. Cost is
+  roughly 2× runtime. Also in this session: CG-snap-to-shell-centroid, and the
+  demo set rewritten around the owner's brief (`payload_deck` is now the
+  default). See `apps/tierod/CLAUDE.md` "Session 10c as-built notes".
+
 ## Later pushes (sketch only — do not start)
 
 - **Phase 2 (`optimize.py`):** epigraph minimax over rods × 26 cases × 2 senses as

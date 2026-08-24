@@ -93,16 +93,27 @@ class BodyFormSpec:
     cg_disabled: bool
     g_factor_disabled: bool
     note: str
+    #: Can the CG be snapped to the shell's centre of volume?
+    can_snap_cg: bool = False
+    snap_note: str = ""
 
 
-def body_form_spec(body: Body) -> BodyFormSpec:
+def body_form_spec(body: Body, snap_cg: bool = False) -> BodyFormSpec:
     grounded = bool(body.is_ground)
+    centre = body.shell_centroid()
     return BodyFormSpec(
         body_id=body.id,
         is_ground=grounded,
         mass_disabled=grounded,
-        cg_disabled=grounded,
+        cg_disabled=grounded or (bool(snap_cg) and centre is not None),
         g_factor_disabled=grounded,
+        can_snap_cg=centre is not None,
+        snap_note=(
+            "No clearance shell, so there is no volume to take a centre of."
+            if centre is None else
+            f"Shell centre of volume: "
+            f"[{centre[0]:.2f}, {centre[1]:.2f}, {centre[2]:.2f}] (body-local)."
+        ),
         note=(
             "Ground: contributes no DOF and no inertial load. Mass and CG are "
             "kept, just inactive."
@@ -300,6 +311,22 @@ def body_editor(assembly: Assembly) -> None:
                     help="Scalar. The load case supplies only a unit direction, "
                          "so every case has the same magnitude.",
                 )
+            snap = st.checkbox(
+                "Snap CG to the shell's centre of volume",
+                value=st.session_state.get(f"tierod::cgsnap::{body.id}", False),
+                disabled=spec.is_ground or not spec.can_snap_cg,
+                key=f"tierod::cgsnap::{body.id}",
+                help="A Cylinder is defined by a z RANGE, so one spanning "
+                     "0 to 10 from an origin at its base has its centre of "
+                     "volume 5 in up. Leaving cg at [0,0,0] there puts the "
+                     "mass at the base and changes the inertial moment about "
+                     "the datum — not just the picture.",
+            )
+            spec = body_form_spec(body, snap_cg=snap)
+            st.caption(spec.snap_note)
+            if snap and spec.can_snap_cg and not spec.is_ground:
+                body.snap_cg_to_shell()
+
             cols = st.columns(3)
             cg = [
                 cols[i].number_input(
@@ -308,8 +335,12 @@ def body_editor(assembly: Assembly) -> None:
                 )
                 for i, ax in enumerate("XYZ")
             ]
+            # When snapped, the shell owns the CG: writing the (grayed) widget
+            # values back would fight the snap and win on the next rerun.
             if not spec.mass_disabled:
-                apply_body_edits(body, mass=mass, cg=cg, g_factor=g_factor)
+                apply_body_edits(body, mass=mass, g_factor=g_factor)
+                if not spec.cg_disabled:
+                    apply_body_edits(body, cg=cg)
 
 
 def topology_editor(assembly: Assembly) -> None:

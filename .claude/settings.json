@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Python/python.exe:*)",
+      "Bash(PYTHONIOENCODING=utf-8 C:/Python/python.exe:*)",
+      "Bash(/c/Python/python.exe:*)",
+      "Bash(PYTHONIOENCODING=utf-8 /c/Python/python.exe:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)"
+    ]
+  }
+}
