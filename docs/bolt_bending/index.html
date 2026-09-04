@@ -1,0 +1,646 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bolt bending — shear and moment along the grip</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --paper:#EEF1F1;
+    --panel:#FFFFFF;
+    --ink:#16232A;
+    --muted:#5D6F78;
+    --rule:#C9D4D8;
+    --rule-soft:#E2E9EB;
+    --shear:#1D6E9C;
+    --moment:#8C2F39;
+    --warn:#8E5410;
+    --ok:#2C6E49;
+    --field:#F7F9F9;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"IBM Plex Sans",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+
+  header{
+    display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+    padding-bottom:14px;margin-bottom:22px;
+    border-bottom:2px solid var(--ink);
+  }
+  h1{font-size:23px;font-weight:600;letter-spacing:-.01em;margin:0}
+  header p{margin:0;color:var(--muted);font-size:14px;max-width:52ch}
+
+  .cols{display:grid;grid-template-columns:352px minmax(0,1fr);gap:26px;align-items:start}
+  @media (max-width:920px){.cols{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:16px 16px 18px}
+  .card + .card{margin-top:18px}
+  h2{font-size:13px;font-weight:600;margin:0 0 12px;color:var(--muted)}
+
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:4px}
+  input[type=number],select{
+    width:100%;font:inherit;font-variant-numeric:tabular-nums;
+    background:var(--field);color:var(--ink);
+    border:1px solid var(--rule);border-radius:2px;padding:6px 8px;
+  }
+  input[type=number]:focus,select:focus,button:focus-visible{
+    outline:2px solid var(--shear);outline-offset:1px;
+  }
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+  .field{min-width:0}
+
+  .chk{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;color:var(--ink)}
+  .chk input{accent-color:var(--shear);width:15px;height:15px}
+  .chk label{margin:0;color:inherit;font-size:inherit}
+
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th{font-size:11.5px;font-weight:500;color:var(--muted);text-align:left;padding:0 4px 6px}
+  td{padding:3px 4px}
+  td input,td select{padding:5px 6px;font-size:14px}
+  .rm{
+    background:none;border:1px solid transparent;color:var(--muted);
+    font:inherit;line-height:1;cursor:pointer;padding:5px 7px;border-radius:2px;
+  }
+  .rm:hover{border-color:var(--rule);color:var(--moment)}
+
+  .btn{
+    font:inherit;font-size:13.5px;cursor:pointer;
+    background:var(--panel);color:var(--ink);
+    border:1px solid var(--rule);border-radius:2px;padding:6px 11px;
+  }
+  .btn:hover{border-color:var(--ink)}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+
+  figure{margin:0}
+  svg{display:block;width:100%;height:auto}
+
+  .peak{font-size:15px;margin:14px 2px 0;font-variant-numeric:tabular-nums}
+
+  .res{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+  .res div{background:var(--panel);padding:11px 13px}
+  .res dt{font-size:12px;color:var(--muted);margin:0 0 3px}
+  .res dd{margin:0;font-size:19px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .res dd small{font-size:12.5px;color:var(--muted);letter-spacing:0}
+
+  .checks{list-style:none;margin:0;padding:0;font-size:13.5px}
+  .checks li{display:flex;gap:9px;padding:6px 0;border-top:1px solid var(--rule-soft)}
+  .checks li:first-child{border-top:0}
+  .checks b{font-weight:500;font-variant-numeric:tabular-nums}
+  .mark{flex:0 0 auto;width:13px;text-align:center;font-weight:600}
+  .ok .mark{color:var(--ok)} .warn .mark{color:var(--warn)}
+  .note{color:var(--muted)}
+
+  .method{margin-top:26px}
+  .method .card{padding:20px 22px 24px}
+  .method .lead{margin:0 0 4px;color:var(--muted);max-width:80ch}
+  .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px 44px;margin-top:6px}
+  @media (max-width:920px){.mgrid{grid-template-columns:1fr;gap:0}}
+  .method h3{font-size:13.5px;font-weight:600;margin:24px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--rule-soft)}
+  .method p{margin:0 0 11px;max-width:74ch;font-size:14.5px}
+  .method i{font-style:italic}
+  .ov{border-top:1px solid currentColor;padding-top:1px}
+  .eq{
+    background:var(--field);border-left:2px solid var(--shear);
+    padding:9px 13px;margin:0 0 11px;font-size:15px;
+    font-variant-numeric:tabular-nums;overflow-x:auto;
+  }
+  table.wex{margin:0 0 12px;font-size:13.5px}
+  table.wex th{padding:0 10px 5px 0;border-bottom:1px solid var(--rule)}
+  table.wex td{padding:5px 10px 5px 0;border-bottom:1px solid var(--rule-soft)}
+  table.wex tr.hi td{background:rgba(140,47,57,.07);font-weight:500}
+
+  footer{margin-top:26px;font-size:12.5px;color:var(--muted);max-width:76ch}
+  footer p{margin:0 0 6px}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Bolt bending — shear and moment along the grip</h1>
+  <p>Bearing from each plate is spread over its own thickness. Gaps and spacers carry no bearing, so they pass moment straight through.</p>
+</header>
+
+<div class="cols">
+
+  <div>
+    <section class="card">
+      <h2>Bolt</h2>
+      <div class="grid2">
+        <div class="field"><label for="d">Shank diameter, in</label><input type="number" id="d" value="0.375" step="0.001" min="0.001"></div>
+        <div class="field"><label for="dcrit">Section diameter, in</label><input type="number" id="dcrit" value="0.315" step="0.001" min="0.001"></div>
+        <div class="field"><label for="ftu">F<sub>tu</sub>, ksi</label><input type="number" id="ftu" value="160" step="1" min="1"></div>
+        <div class="field"><label for="fsu">F<sub>su</sub>, ksi</label><input type="number" id="fsu" value="95" step="1" min="1"></div>
+        <div class="field"><label for="mor">Bending shape factor k</label><input type="number" id="mor" value="1.5" step="0.05" min="1" max="1.7"></div>
+        <div class="field"><label for="fs">Fitting factor</label><input type="number" id="fs" value="1.0" step="0.05" min="1"></div>
+      </div>
+      <div class="chk">
+        <input type="checkbox" id="useCrit" checked>
+        <label for="useCrit">Use section diameter for stress</label>
+      </div>
+      <div class="chk">
+        <input type="checkbox" id="closeM" checked>
+        <label for="closeM">React leftover moment at head and nut</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Stack, head to nut</h2>
+      <table>
+        <thead><tr>
+          <th style="width:88px">Type</th><th>Thickness</th><th>Load, lbf</th><th style="width:30px"></th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="btnrow">
+        <button class="btn" id="addPlate">Add plate</button>
+        <button class="btn" id="addGap">Add gap</button>
+        <button class="btn" id="reset">Reset</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Equilibrium and screening</h2>
+      <ul class="checks" id="checks"></ul>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <figure>
+        <svg id="plot" viewBox="0 0 820 552" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Joint elevation with bearing distribution, and shear and moment diagrams along the bolt"></svg>
+      </figure>
+      <p class="peak" id="peak"></p>
+    </section>
+
+    <section class="card">
+      <h2>Strength</h2>
+      <dl class="res" id="results"></dl>
+    </section>
+  </div>
+
+</div>
+
+<section class="method">
+  <div class="card">
+    <h2>Method</h2>
+    <p class="lead">Everything below is reproducible with a calculator. The tool does no iteration and calls no solver — it evaluates closed-form expressions segment by segment.</p>
+
+    <div class="mgrid">
+      <div>
+
+        <h3>1 &nbsp;Model</h3>
+        <p>The bolt is treated as a straight beam whose axis <i>x</i> runs from the head bearing face (<i>x</i>&nbsp;=&nbsp;0) to the nut face (<i>x</i>&nbsp;=&nbsp;<i>L</i>), where <i>L</i> is the total grip. The only transverse loads are the bearing pressures the plates apply to the shank, plus whatever the head and nut react. Bending is taken in a single plane, so the problem is one-dimensional.</p>
+        <p>Each plate is assumed to bear <b>uniformly over its own thickness</b>. This is the conservative baseline: real bearing peaks toward the shear planes, which shortens the effective moment arm.</p>
+
+        <h3>2 &nbsp;Bearing intensity</h3>
+        <p>A plate of thickness <i>t<sub>i</sub></i> carrying transverse load <i>P<sub>i</sub></i> applies a line load</p>
+        <div class="eq"><i>w<sub>i</sub></i> = <i>P<sub>i</sub></i> / <i>t<sub>i</sub></i> &nbsp;&nbsp;[lbf/in]</div>
+        <p>over the span it occupies. Gaps and spacers get <i>w</i>&nbsp;=&nbsp;0. They support nothing and simply carry shear across, which is why a spacer adds moment arm at no benefit. The shaded blocks in the joint elevation are these intensities, scaled to a common maximum.</p>
+
+        <h3>3 &nbsp;Equilibrium</h3>
+        <p>Force balance requires the plate loads to sum to zero:</p>
+        <div class="eq">&Sigma; <i>P<sub>i</sub></i> = 0</div>
+        <p>Moment balance is a separate condition and is <i>not</i> automatic. Taking moments about the head face,</p>
+        <div class="eq"><i>M</i><sub>res</sub> = &Sigma; <i>P<sub>i</sub></i> · <span class="ov">x</span><sub><i>i</i></sub>,&nbsp;&nbsp; <span class="ov">x</span><sub><i>i</i></sub> = <i>x</i><sub>0,<i>i</i></sub> + <i>t<sub>i</sub></i>/2</div>
+        <p>A symmetric double-shear stack gives <i>M</i><sub>res</sub>&nbsp;=&nbsp;0 on its own. Any asymmetry — an offset spacer, unequal thicknesses — leaves a residue that a real bolt reacts through head and nut bearing. The tool closes it with an equal and opposite pair:</p>
+        <div class="eq"><i>R<sub>L</sub></i> = &minus;<i>M</i><sub>res</sub> / <i>L</i>,&nbsp;&nbsp; <i>R</i><sub>0</sub> = &minus;<i>R<sub>L</sub></i></div>
+        <p>applied at <i>x</i>&nbsp;=&nbsp;0 and <i>x</i>&nbsp;=&nbsp;<i>L</i>. This adds no net force, and both diagrams then close at the nut. Unchecking the box drops the pair so you can see the raw imbalance.</p>
+
+        <h3>4 &nbsp;Integration</h3>
+        <p>Within a segment of constant <i>w</i>, starting at <i>x</i><sub>0</sub> with known <i>V</i><sub>0</sub> and <i>M</i><sub>0</sub>, let <i>u</i>&nbsp;=&nbsp;<i>x</i>&nbsp;&minus;&nbsp;<i>x</i><sub>0</sub>:</p>
+        <div class="eq"><i>V</i>(<i>u</i>) = <i>V</i><sub>0</sub> + <i>w u</i></div>
+        <div class="eq"><i>M</i>(<i>u</i>) = <i>M</i><sub>0</sub> + <i>V</i><sub>0</sub> <i>u</i> + &frac12; <i>w u</i><sup>2</sup></div>
+        <p>Start with <i>V</i>&nbsp;=&nbsp;<i>R</i><sub>0</sub> and <i>M</i>&nbsp;=&nbsp;0 at the head, walk the segments in order, and carry the end values of one into the next. Shear is piecewise linear; moment is piecewise quadratic. Add <i>R<sub>L</sub></i> to the shear at the nut and it should return to zero.</p>
+
+        <h3>5 &nbsp;Locating the peak</h3>
+        <p>Peak moment sits where shear crosses zero. Inside a segment with <i>w</i>&nbsp;&ne;&nbsp;0 that is</p>
+        <div class="eq"><i>u</i>* = &minus;<i>V</i><sub>0</sub> / <i>w</i>,&nbsp;&nbsp; valid if 0 &lt; <i>u</i>* &lt; segment length</div>
+        <p>Evaluate <i>M</i> at every <i>u</i>*, at every segment boundary, and at both ends, then take the largest magnitude. Nothing else needs checking — a quadratic has no other stationary points. Note that a gap has <i>w</i>&nbsp;=&nbsp;0 and so contains no interior peak, but it is where the moment climbs fastest at constant slope.</p>
+
+      </div>
+      <div>
+
+        <h3>6 &nbsp;Section properties</h3>
+        <p>Round solid section of diameter <i>d</i>:</p>
+        <div class="eq"><i>Z</i> = &pi; <i>d</i><sup>3</sup> / 32,&nbsp;&nbsp; <i>A</i> = &pi; <i>d</i><sup>2</sup> / 4</div>
+        <p>Use the thread minor diameter if threads or a thread runout fall near the peak moment. On long grips with spacers this is a common trap, because the peak often lands well inboard of where the shank ends.</p>
+
+        <h3>7 &nbsp;Stresses and margins</h3>
+        <div class="eq"><i>f<sub>b</sub></i> = <i>M</i><sub>max</sub> / <i>Z</i>,&nbsp;&nbsp; <i>f<sub>s</sub></i> = <i>V</i><sub>max</sub> / <i>A</i></div>
+        <p>Bending is checked against a modulus of rupture, not against <i>F<sub>tu</sub></i> directly. A solid round has a fully plastic shape factor of 1.7; <i>k</i>&nbsp;=&nbsp;1.5 is the usual defensible working value, and MMPDS bending MOR curves are better still where they exist.</p>
+        <div class="eq"><i>F<sub>b</sub></i> = <i>k</i> <i>F<sub>tu</sub></i></div>
+        <div class="eq">MS<sub>b</sub> = <i>F<sub>b</sub></i> / (<i>f<sub>b</sub></i> · FF) &minus; 1</div>
+        <div class="eq">MS<sub>s</sub> = <i>F<sub>su</sub></i> / (<i>f<sub>s</sub></i> · FF) &minus; 1</div>
+        <p>FF is the fitting factor. Shear here is the average <i>V</i>/<i>A</i>; the true peak on a round section is 4/3 of that, so add the factor yourself if your process demands it.</p>
+
+        <h3>8 &nbsp;Combined check</h3>
+        <p>Peak moment and peak shear almost never coincide, so pairing the two maxima is both wrong and needlessly harsh. The tool evaluates the interaction at every station and reports the worst:</p>
+        <div class="eq"><i>R<sub>b</sub></i> = <i>M</i>(<i>x</i>)·FF / (<i>Z F<sub>b</sub></i>),&nbsp;&nbsp; <i>R<sub>s</sub></i> = <i>V</i>(<i>x</i>)·FF / (<i>A F<sub>su</sub></i>)</div>
+        <div class="eq">MS<sub>c</sub> = 1 / &radic;( max[ <i>R<sub>b</sub></i><sup>2</sup> + <i>R<sub>s</sub></i><sup>2</sup> ] ) &minus; 1</div>
+
+        <h3>9 &nbsp;Worked example</h3>
+        <p>The default stack, by hand. Plates 1&ndash;3 at 0.250, 0.500 and 0.250 in carrying +1000, &minus;2000 and +1000 lbf, with a 0.060 in spacer after plate 1. <i>L</i>&nbsp;=&nbsp;1.060 in, so every plate runs at |<i>w</i>|&nbsp;=&nbsp;4000 lbf/in.</p>
+        <p>&Sigma;<i>P</i>&nbsp;=&nbsp;0. Moments about the head give <i>M</i><sub>res</sub>&nbsp;=&nbsp;1000(0.125) &minus; 2000(0.560) + 1000(0.935) = &minus;60 in·lbf, hence <i>R<sub>L</sub></i>&nbsp;=&nbsp;+56.60 and <i>R</i><sub>0</sub>&nbsp;=&nbsp;&minus;56.60 lbf.</p>
+        <table class="wex">
+          <thead><tr><th><i>x</i>, in</th><th>station</th><th><i>V</i>, lbf</th><th><i>M</i>, in·lbf</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td>head</td><td>&minus;56.6</td><td>0</td></tr>
+            <tr><td>0.250</td><td>end plate 1</td><td>943.4</td><td>110.8</td></tr>
+            <tr><td>0.310</td><td>end spacer</td><td>943.4</td><td>167.5</td></tr>
+            <tr class="hi"><td>0.546</td><td><i>V</i> = 0, plate 2</td><td>0</td><td>278.7</td></tr>
+            <tr><td>0.810</td><td>end plate 2</td><td>&minus;1056.6</td><td>139.2</td></tr>
+            <tr><td>1.060</td><td>nut, after <i>R<sub>L</sub></i></td><td>0</td><td>0</td></tr>
+          </tbody>
+        </table>
+        <p>With <i>d</i>&nbsp;=&nbsp;0.315 in: <i>Z</i>&nbsp;=&nbsp;0.003069 in<sup>3</sup> and <i>A</i>&nbsp;=&nbsp;0.07793 in<sup>2</sup>. Then <i>f<sub>b</sub></i>&nbsp;=&nbsp;278.7/0.003069&nbsp;=&nbsp;90.8 ksi against <i>F<sub>b</sub></i>&nbsp;=&nbsp;1.5(160)&nbsp;=&nbsp;240 ksi, giving MS<sub>b</sub>&nbsp;=&nbsp;+1.64. Shear at the peak-moment station is zero, so the combined margin lands at the same +1.64.</p>
+        <p>Both diagrams close at the nut, which is the arithmetic check worth doing every time. If <i>M</i>(<i>L</i>) is not zero, the load split or the residual moment has been mishandled.</p>
+
+        <h3>10 &nbsp;What is not included</h3>
+        <p>No credit is taken for clamp-up, which genuinely stiffens the joint and reduces bolt bending but is hard to quantify by hand. No axial load, preload or prying. No bearing peaking: shortening the arm requires the Melcon &amp; Hoblit treatment in AFFDL-TR-69-42, and the ESDU 91008 reduced arm is valid only at ultimate with plastic bearing redistribution, not where yield governs.</p>
+        <p>The load split between shear planes is an input, not a result. It is statically indeterminate and should come from relative plate stiffness or a bounding sensitivity study. Plate bearing, shear-out, net section and lug strength are all separate checks.</p>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+const DEFAULT = [
+  {type:'plate', t:0.250, P: 1000},
+  {type:'gap',   t:0.060, P: 0},
+  {type:'plate', t:0.500, P:-2000},
+  {type:'plate', t:0.250, P: 1000}
+];
+let layers = DEFAULT.map(o=>({...o}));
+
+const $ = id => document.getElementById(id);
+const num = id => parseFloat($(id).value) || 0;
+
+function fmt(v, dp){
+  if(!isFinite(v)) return '—';
+  return v.toLocaleString(undefined,{minimumFractionDigits:dp,maximumFractionDigits:dp});
+}
+function sig(v){
+  const a = Math.abs(v);
+  if(a === 0) return '0';
+  if(a >= 1000) return fmt(v,0);
+  if(a >= 100) return fmt(v,1);
+  if(a >= 1) return fmt(v,2);
+  return fmt(v,3);
+}
+
+/* ---------- input table ---------- */
+function drawRows(){
+  const tb = $('rows');
+  tb.innerHTML = '';
+  layers.forEach((L,i)=>{
+    const tr = document.createElement('tr');
+
+    const tdT = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.innerHTML = '<option value="plate">Plate</option><option value="gap">Gap</option>';
+    sel.value = L.type;
+    sel.setAttribute('aria-label','Layer '+(i+1)+' type');
+    sel.onchange = e => { L.type = e.target.value; if(L.type==='gap') L.P = 0; drawRows(); update(); };
+    tdT.appendChild(sel);
+
+    const tdt = document.createElement('td');
+    const it = document.createElement('input');
+    it.type='number'; it.step='0.005'; it.min='0'; it.value=L.t;
+    it.setAttribute('aria-label','Layer '+(i+1)+' thickness');
+    it.oninput = e => { L.t = parseFloat(e.target.value)||0; update(); };
+    tdt.appendChild(it);
+
+    const tdP = document.createElement('td');
+    const ip = document.createElement('input');
+    ip.type='number'; ip.step='50'; ip.value=L.P;
+    ip.disabled = (L.type==='gap');
+    ip.setAttribute('aria-label','Layer '+(i+1)+' load');
+    ip.oninput = e => { L.P = parseFloat(e.target.value)||0; update(); };
+    tdP.appendChild(ip);
+
+    const tdX = document.createElement('td');
+    const b = document.createElement('button');
+    b.className='rm'; b.textContent='×'; b.title='Remove layer';
+    b.setAttribute('aria-label','Remove layer '+(i+1));
+    b.onclick = () => { layers.splice(i,1); drawRows(); update(); };
+    tdX.appendChild(b);
+
+    tr.append(tdT,tdt,tdP,tdX);
+    tb.appendChild(tr);
+  });
+}
+
+$('addPlate').onclick = () => { layers.push({type:'plate',t:0.25,P:0}); drawRows(); update(); };
+$('addGap').onclick   = () => { layers.push({type:'gap',t:0.06,P:0});  drawRows(); update(); };
+$('reset').onclick    = () => { layers = DEFAULT.map(o=>({...o})); drawRows(); update(); };
+['d','dcrit','ftu','fsu','mor','fs'].forEach(id => $(id).oninput = update);
+['useCrit','closeM'].forEach(id => $(id).onchange = update);
+
+/* ---------- analysis ---------- */
+function analyse(){
+  const segs = [];
+  let x = 0, sumP = 0, momP = 0;
+  for(const L of layers){
+    const t = Math.max(L.t,0);
+    const P = (L.type==='plate') ? L.P : 0;
+    const w = (L.type==='plate' && t>0) ? P/t : 0;
+    segs.push({x0:x, x1:x+t, w, type:L.type, P, t});
+    sumP += P;
+    momP += P * (x + t/2);
+    x += t;
+  }
+  const L = x;
+  const closeM = $('closeM').checked;
+  const RL = (closeM && L>0) ? -momP/L : 0;
+  const R0 = -RL;
+
+  const pts = [];
+  let V = R0, M = 0;
+  const N = 36;
+  for(const s of segs){
+    const len = s.x1 - s.x0;
+    if(len <= 0) continue;
+    const V0 = V, M0 = M;
+    for(let j=0;j<=N;j++){
+      const u = len*j/N;
+      pts.push({x:s.x0+u, V:V0 + s.w*u, M:M0 + V0*u + 0.5*s.w*u*u});
+    }
+    // stationary point of M
+    if(Math.abs(s.w) > 1e-12){
+      const u = -V0/s.w;
+      if(u>0 && u<len) pts.push({x:s.x0+u, V:0, M:M0 + V0*u + 0.5*s.w*u*u});
+    }
+    V = V0 + s.w*len;
+    M = M0 + V0*len + 0.5*s.w*len*len;
+  }
+  pts.sort((a,b)=>a.x-b.x);
+  if(pts.length) pts.push({x:L, V:V+RL, M:M});
+
+  let Mmax = {M:0,x:0,V:0}, Vmax = 0;
+  for(const p of pts){
+    if(Math.abs(p.M) > Math.abs(Mmax.M)) Mmax = p;
+    if(Math.abs(p.V) > Math.abs(Vmax)) Vmax = p.V;
+  }
+  return {segs, L, pts, sumP, momP, R0, RL, Mmax, Vmax, closeM};
+}
+
+function layerNameAt(a, x){
+  let i = 0;
+  for(const s of a.segs){
+    if(s.type==='plate') i++;
+    if(x >= s.x0-1e-9 && x <= s.x1+1e-9)
+      return s.type==='gap' ? 'in the gap' : 'in plate '+i;
+  }
+  return '';
+}
+
+/* ---------- plot ---------- */
+const NS='http://www.w3.org/2000/svg';
+function el(n,a){const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
+
+function plot(a){
+  const svg = $('plot');
+  svg.innerHTML='';
+  const defs = el('defs');
+  const pat = el('pattern',{id:'hatch',width:6,height:6,patternTransform:'rotate(45)',patternUnits:'userSpaceOnUse'});
+  pat.appendChild(el('rect',{width:6,height:6,fill:'#F7F9F9'}));
+  pat.appendChild(el('line',{x1:0,y1:0,x2:0,y2:6,stroke:'#C9D4D8','stroke-width':1.4}));
+  defs.appendChild(pat); svg.appendChild(defs);
+
+  const TOP=76, H=384, BOT=TOP+H;   // bolt axis runs down the page
+  const CX=210, BW=26, PL=126;      // centreline, bolt width, plate reach (schematic)
+  const panels=[
+    {key:'V',x0:352,w:198,color:'var(--shear)',label:'Shear V, lbf'},
+    {key:'M',x0:596,w:198,color:'var(--moment)',label:'Moment M, in·lbf'}
+  ];
+
+  const txt=(x,y,s,o)=>{
+    const t=el('text',Object.assign({x,y,'font-family':'inherit','font-size':11,fill:'#5D6F78'},o||{}));
+    t.textContent=s; svg.appendChild(t); return t;
+  };
+
+  if(a.L<=0 || !a.pts.length){
+    txt(24,90,'Add a layer with thickness to see the diagrams.',{'font-size':14});
+    return;
+  }
+  const sy = x => TOP + H*x/a.L;
+
+  txt(CX,30,'Joint and bearing',{'text-anchor':'middle','font-size':12,fill:'#16232A','font-weight':500});
+
+  /* ---- head, nut, bolt ---- */
+  const cap=(y,label)=>{
+    svg.appendChild(el('rect',{x:CX-BW/2-11,y,width:BW+22,height:17,fill:'#D7E0E3',stroke:'#16232A','stroke-width':1}));
+    txt(CX-BW/2-16,y+12,label,{'text-anchor':'end'});
+  };
+  svg.appendChild(el('line',{x1:CX,y1:TOP-34,x2:CX,y2:BOT+34,stroke:'#16232A','stroke-width':1,'stroke-dasharray':'7 4',opacity:.3}));
+  svg.appendChild(el('rect',{x:CX-BW/2,y:TOP,width:BW,height:H,fill:'#EDF2F3',stroke:'#16232A','stroke-width':1}));
+  cap(TOP-17,'head'); cap(BOT,'nut');
+
+  /* ---- plates, spacers, bearing intensity ---- */
+  let wmax=0;
+  for(const s of a.segs) if(s.type==='plate'&&s.t>0) wmax=Math.max(wmax,Math.abs(s.P/s.t));
+
+  let pi=0;
+  for(const s of a.segs){
+    const y0=sy(s.x0), h=sy(s.x1)-sy(s.x0);
+    if(h<=0) continue;
+
+    if(s.type==='gap'){
+      svg.appendChild(el('rect',{x:CX-BW/2-32,y:y0,width:BW+64,height:h,
+        fill:'url(#hatch)',stroke:'#16232A','stroke-width':1}));
+      if(h>=12) txt(CX+BW/2+38,y0+h/2+4,'spacer');
+      continue;
+    }
+
+    pi++;
+    const w = s.P/s.t;
+    const side = s.P>=0 ? -1 : 1;        // plate body sits opposite the load it applies
+    const xIn  = CX + side*BW/2;         // face bearing on the bolt
+    const xOut = xIn + side*PL;
+
+    svg.appendChild(el('rect',{x:Math.min(xIn,xOut),y:y0,width:PL,height:h,
+      fill:'#E4EBEE',stroke:'#16232A','stroke-width':1}));
+
+    // bearing block, width proportional to intensity w = P/t
+    const bw = wmax>0 ? 92*Math.abs(w)/wmax : 0;
+    if(bw>1.5){
+      svg.appendChild(el('rect',{x:Math.min(xIn,xIn+side*bw),y:y0,width:bw,height:h,
+        fill:'var(--shear)',opacity:.17}));
+      svg.appendChild(el('line',{x1:xIn+side*bw,y1:y0,x2:xIn+side*bw,y2:y0+h,
+        stroke:'var(--shear)','stroke-width':1.6}));
+      const n=Math.max(1,Math.min(7,Math.round(h/13)));
+      for(let k=0;k<n;k++){
+        const ay=y0+h*(k+0.5)/n, tail=xIn+side*bw, head=xIn;
+        svg.appendChild(el('path',{
+          d:`M${tail} ${ay} H${head} M${head-side*6} ${ay-4} L${head} ${ay} L${head-side*6} ${ay+4}`,
+          stroke:'var(--shear)','stroke-width':1.3,fill:'none','stroke-linecap':'round','stroke-linejoin':'round'}));
+      }
+    }
+
+    const anc = side<0 ? 'start' : 'end', lx = xOut - side*7;
+    if(h>=30){
+      txt(lx,y0+h/2-2,'plate '+pi,{'text-anchor':anc});
+      txt(lx,y0+h/2+12,sig(w)+' lbf/in',{'text-anchor':anc,'font-size':10.5,opacity:.72});
+    } else if(h>=13){
+      txt(lx,y0+h/2+4,'plate '+pi,{'text-anchor':anc});
+    }
+  }
+
+  /* ---- head and nut reactions ---- */
+  const react=(y,R)=>{
+    if(Math.abs(R)<0.5) return;
+    const s=R>=0?1:-1, x0=CX+s*(BW/2+6), x1=x0+s*46;
+    svg.appendChild(el('path',{d:`M${x0} ${y} H${x1} M${x1-s*7} ${y-4} L${x1} ${y} L${x1-s*7} ${y+4}`,
+      stroke:'var(--moment)','stroke-width':1.5,fill:'none','stroke-linecap':'round','stroke-linejoin':'round'}));
+    txt(x1+s*6,y+4,sig(Math.abs(R))+' lbf',{'text-anchor':s>0?'start':'end',fill:'var(--moment)','font-size':10.5});
+  };
+  react(TOP-30,a.R0); react(BOT+32,a.RL);
+
+  /* ---- station scale ---- */
+  let lastY=-99;
+  const stat=(x,lab)=>{
+    const y=sy(x);
+    if(Math.abs(y-lastY)<12) return;
+    lastY=y;
+    svg.appendChild(el('line',{x1:CX-BW/2-PL-6,y1:y,x2:CX-BW/2-PL,y2:y,stroke:'#16232A','stroke-width':1,opacity:.5}));
+    txt(CX-BW/2-PL-10,y+4,lab,{'text-anchor':'end'});
+  };
+  stat(0,'0');
+  for(const s of a.segs) if(s.x1>1e-9 && s.x1<a.L-1e-9) stat(s.x1,fmt(s.x1,3));
+  lastY=-99; stat(a.L,fmt(a.L,3));
+
+  const ax=el('text',{transform:`translate(18,${(TOP+BOT)/2}) rotate(-90)`,'text-anchor':'middle',
+    'font-family':'inherit','font-size':11.5,fill:'#5D6F78'});
+  ax.textContent='Distance along bolt from head, in'; svg.appendChild(ax);
+
+  /* ---- shear and moment panels, same vertical scale ---- */
+  for(const p of panels){
+    let lo=0,hi=0;
+    for(const q of a.pts){ lo=Math.min(lo,q[p.key]); hi=Math.max(hi,q[p.key]); }
+    if(hi-lo<1e-9){hi=1;lo=-1;}
+    const pad=(hi-lo)*0.16; hi+=pad; lo-=pad;
+    const px = v => p.x0 + p.w*(v-lo)/(hi-lo);
+
+    txt(p.x0+p.w/2,30,p.label,{'text-anchor':'middle','font-size':12,fill:p.color,'font-weight':500});
+
+    for(const s of a.segs){
+      if(s.type!=='gap'||s.x1<=s.x0) continue;
+      svg.appendChild(el('rect',{x:p.x0,y:sy(s.x0),width:p.w,height:sy(s.x1)-sy(s.x0),fill:'#16232A',opacity:.05}));
+    }
+    for(const s of a.segs){
+      if(s.x0<=0) continue;
+      svg.appendChild(el('line',{x1:p.x0,y1:sy(s.x0),x2:p.x0+p.w,y2:sy(s.x0),stroke:'#C9D4D8','stroke-width':1}));
+    }
+    svg.appendChild(el('line',{x1:p.x0,y1:TOP,x2:p.x0+p.w,y2:TOP,stroke:'#16232A','stroke-width':1}));
+    svg.appendChild(el('line',{x1:p.x0,y1:BOT,x2:p.x0+p.w,y2:BOT,stroke:'#16232A','stroke-width':1}));
+    svg.appendChild(el('line',{x1:px(0),y1:TOP,x2:px(0),y2:BOT,stroke:'#16232A','stroke-width':1,opacity:.55}));
+
+    [lo+pad,0,hi-pad].forEach(v=>{
+      svg.appendChild(el('line',{x1:px(v),y1:BOT,x2:px(v),y2:BOT+4,stroke:'#16232A','stroke-width':1,opacity:.6}));
+      txt(px(v),BOT+17,sig(v),{'text-anchor':'middle'});
+    });
+
+    let d=`M${px(0)} ${sy(a.pts[0].x)}`;
+    for(const q of a.pts) d+=` L${px(q[p.key])} ${sy(q.x)}`;
+    d+=` L${px(0)} ${sy(a.pts[a.pts.length-1].x)} Z`;
+    svg.appendChild(el('path',{d,fill:p.color,opacity:.13}));
+
+    let d2=`M${px(a.pts[0][p.key])} ${sy(a.pts[0].x)}`;
+    for(const q of a.pts.slice(1)) d2+=` L${px(q[p.key])} ${sy(q.x)}`;
+    svg.appendChild(el('path',{d:d2,fill:'none',stroke:p.color,'stroke-width':2,'stroke-linejoin':'round'}));
+
+    if(p.key==='M' && Math.abs(a.Mmax.M)>1e-9){
+      const s2 = a.Mmax.M>=0?1:-1;
+      svg.appendChild(el('circle',{cx:px(a.Mmax.M),cy:sy(a.Mmax.x),r:4,fill:p.color}));
+      txt(px(a.Mmax.M)+s2*8,sy(a.Mmax.x)-8,sig(a.Mmax.M),
+        {'text-anchor':s2>0?'start':'end',fill:p.color,'font-size':12,'font-weight':500});
+    }
+  }
+
+  txt(CX-BW/2-PL,BOT+72,'Shaded blocks are bearing intensity P/t. Positive load acts to the right.',{'font-size':11});
+}
+
+/* ---------- results and checks ---------- */
+function update(){
+  const a = analyse();
+  plot(a);
+
+  const dShank = num('d');
+  const dSec = $('useCrit').checked ? num('dcrit') : dShank;
+  const Ftu = num('ftu')*1000, Fsu = num('fsu')*1000;
+  const k = num('mor') || 1, FS = num('fs') || 1;
+
+  const Z = Math.PI*Math.pow(dSec,3)/32;
+  const A = Math.PI*Math.pow(dSec,2)/4;
+  const Fb = k*Ftu;
+
+  const fb = Z>0 ? Math.abs(a.Mmax.M)/Z : Infinity;
+  const fs = A>0 ? Math.abs(a.Vmax)/A : Infinity;
+
+  let worst = 0;
+  for(const q of a.pts){
+    const Rb = Z>0 ? Math.abs(q.M)*FS/(Z*Fb) : Infinity;
+    const Rs = A>0 ? Math.abs(q.V)*FS/(A*Fsu) : Infinity;
+    worst = Math.max(worst, Rb*Rb + Rs*Rs);
+  }
+  const msB = fb>0 ? Fb/(fb*FS)-1 : Infinity;
+  const msS = fs>0 ? Fsu/(fs*FS)-1 : Infinity;
+  const msC = worst>0 ? 1/Math.sqrt(worst)-1 : Infinity;
+
+  $('peak').innerHTML = Math.abs(a.Mmax.M)>1e-9
+    ? `Peak moment <b>${sig(a.Mmax.M)} in·lbf</b> at x = ${fmt(a.Mmax.x,3)} in, ${layerNameAt(a,a.Mmax.x)}.`
+    : 'No bending moment with the loads entered.';
+
+  const msTxt = v => !isFinite(v) ? 'high' : (v>9 ? '&gt; 9' : fmt(v,2));
+  const msCol = v => (isFinite(v) && v<0) ? 'style="color:var(--moment)"' : '';
+  $('results').innerHTML = `
+    <div><dt>Bending stress</dt><dd>${sig(fb/1000)} <small>ksi</small></dd></div>
+    <div><dt>Allowable, k·F<sub>tu</sub></dt><dd>${sig(Fb/1000)} <small>ksi</small></dd></div>
+    <div><dt>MS bending</dt><dd ${msCol(msB)}>${msTxt(msB)}</dd></div>
+    <div><dt>Average shear</dt><dd>${sig(fs/1000)} <small>ksi</small></dd></div>
+    <div><dt>MS shear</dt><dd ${msCol(msS)}>${msTxt(msS)}</dd></div>
+    <div><dt>MS combined</dt><dd ${msCol(msC)}>${msTxt(msC)}</dd></div>`;
+
+  const ratio = dShank>0 ? a.L/dShank : 0;
+  const items = [];
+  const balanced = Math.abs(a.sumP) < 1e-6*Math.max(1, Math.abs(a.momP)/Math.max(a.L,1e-9)) || Math.abs(a.sumP) < 0.5;
+
+  items.push(balanced
+    ? {ok:true, html:`Plate loads sum to zero.`}
+    : {ok:false, html:`Plate loads sum to <b>${sig(a.sumP)} lbf</b>, not zero. Fix the loads before reading the diagrams.`});
+
+  if(a.closeM){
+    items.push({ok:true, html:`Leftover moment <b>${sig(a.momP)} in·lbf</b> reacted by <b>${sig(Math.abs(a.RL))} lbf</b> at head and nut.`});
+  } else {
+    items.push({ok:Math.abs(a.momP)<0.5, html:`Leftover moment <b>${sig(a.momP)} in·lbf</b> is unreacted, so the diagram does not close at the nut.`});
+  }
+
+  items.push(ratio>1.5
+    ? {ok:false, html:`Grip/D = <b>${fmt(ratio,2)}</b>. Bending is likely a driver.`}
+    : {ok:true, html:`Grip/D = <b>${fmt(ratio,2)}</b>. ${ratio<1?'Bending is usually secondary below 1.':'Borderline; keep the check.'}`});
+
+  const gap = a.segs.filter(s=>s.type==='gap').reduce((t,s)=>t+s.t,0);
+  if(gap>0) items.push({ok:false, html:`<b>${fmt(gap,3)} in</b> of gap adds arm with no bearing support.`});
+
+  if($('useCrit').checked && num('dcrit') >= dShank)
+    items.push({ok:false, html:`Section diameter is not smaller than the shank. Use the minor diameter if threads reach the peak moment.`});
+
+  $('checks').innerHTML = items.map(i=>
+    `<li class="${i.ok?'ok':'warn'}"><span class="mark">${i.ok?'✓':'!'}</span><span class="${i.ok?'note':''}">${i.html}</span></li>`
+  ).join('');
+}
+
+drawRows();
+update();
+</script>

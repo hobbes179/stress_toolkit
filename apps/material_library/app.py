@@ -15,7 +15,7 @@ from ui.styles import inject_css
 from ui.components import section_header, warning_banner, html_table
 from ui.theme import THEME
 
-from library.materials import MATERIALS, list_by_category
+from library.materials import CATEGORY_ORDER, MATERIALS, list_by_category
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ def render() -> None:
     t = THEME
 
     grouped  = list_by_category()
-    cats     = [c for c in ("Aluminum", "Steel", "Titanium", "Stainless") if c in grouped]
+    cats     = [c for c in CATEGORY_ORDER if c in grouped]
     all_mats = [m for cat in cats for m in grouped[cat]]
     n_mats   = len(all_mats)
 
@@ -191,7 +191,7 @@ def render() -> None:
         "<h1 class='tk-page-title'>Material Library</h1>"
         "<div class='tk-page-meta'>"
         f"<span><b>{n_mats} alloys</b></span>"
-        "<span>4 categories</span>"
+        f"<span>{len(cats)} categories</span>"
         "<span>MMPDS-01 allowables</span>"
         "<span>IPS units</span>"
         "<span>Room temperature</span>"

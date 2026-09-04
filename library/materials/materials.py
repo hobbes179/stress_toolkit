@@ -56,7 +56,10 @@ Physical:
   rho     Density (lb/in³)
 
 Metadata:
-  category           "Aluminum" / "Steel" / "Titanium" / "Stainless"
+  category           One of CATEGORY_ORDER — "Aluminum" / "Steel" /
+                     "Titanium" / "Stainless" / "Fastener". Add new
+                     categories to CATEGORY_ORDER or they will not appear
+                     in grouped UIs.
   source             MMPDS section or other reference
   notes              Free-form notes string
   estimated_fields   Tuple of field names that are estimates (not MMPDS)
@@ -352,7 +355,100 @@ _materials: list[Material] = [
         rho=0.276,
         source="MMPDS-01 §2.6.5.0",
     ),
+
+    # ── FASTENERS ────────────────────────────────────────────────────────
+    # Bolt and screw STRENGTH LEVELS, not bar or sheet stock. Ftu is the
+    # definitional minimum for the grade — a "160 ksi bolt" is procured to
+    # 160 ksi Ftu — and Fsu is the corresponding tabulated fastener shear
+    # allowable (MMPDS-01 §8.1.4 fastener strength tables).
+    #
+    # ⚠️ VERIFY — these are grade-level nominals for preliminary sizing. For a
+    # released stress report look up the ACTUAL part number and diameter in
+    # MMPDS-01 Table 8.1.4 or the procurement spec: allowables vary with
+    # diameter, thread form, and (for shear) whether threads lie in the shear
+    # plane. Fty is not tabulated for fasteners at all and is estimated here.
+    #
+    # Fcy, Fbru and Fbry are deliberately left None. Bearing is a check on the
+    # PLATE, not on the fastener, and compressive yield does not govern a bolt
+    # in tension, shear, or bending.
+    Material(
+        name="Alloy Steel Bolt 160 ksi",  category="Fastener",
+        Fty=142,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=160, Fsu=95,
+        E=29.0, Ec=29.0, G=11.0, nu=0.32,
+        alpha=6.3, k=225, T_max=450,
+        rho=0.283,
+        source="MMPDS-01 §8.1.4 fastener strength levels (AN/MS/NAS, 8740/4037)",
+        notes="Standard 160 ksi alloy-steel airframe bolt. T_max reflects the "
+              "cadmium-plating limit, not the base alloy.",
+        estimated_fields=("Fty",),
+    ),
+    Material(
+        name="Alloy Steel Bolt 180 ksi",  category="Fastener",
+        Fty=163,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=180, Fsu=108,
+        E=29.0, Ec=29.0, G=11.0, nu=0.32,
+        alpha=6.3, k=225, T_max=450,
+        rho=0.283,
+        source="MMPDS-01 §8.1.4 fastener strength levels (NAS144–158 class)",
+        notes="180 ksi alloy-steel bolt. T_max reflects the plating limit.",
+        estimated_fields=("Fty",),
+    ),
+    Material(
+        name="A286 CRES Bolt 160 ksi",  category="Fastener",
+        Fty=120,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=160, Fsu=95,
+        E=29.1, Ec=29.1, G=11.2, nu=0.31,
+        alpha=9.2, k=100, T_max=1200,
+        rho=0.286,
+        source="MMPDS-01 §8.1.4 fastener strength levels (NAS1953, MS9556 class)",
+        notes="Corrosion-resistant, retains strength hot. Low yield ratio "
+              "relative to alloy steel — check Fty if yield governs.",
+        estimated_fields=("Fty",),
+    ),
+    Material(
+        name="H-11 Steel Bolt 260 ksi",  category="Fastener",
+        Fty=220,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=260, Fsu=156,
+        E=30.0, Ec=30.0, G=11.6, nu=0.30,
+        alpha=6.4, k=170, T_max=900,
+        rho=0.281,
+        source="MMPDS-01 §8.1.4 fastener strength levels (NAS1580 class)",
+        notes="High-strength tool-steel bolt. Notch sensitive — do not take "
+              "plastic bending credit above k = 1.5 without substantiation.",
+        estimated_fields=("Fty",),
+    ),
+    Material(
+        name="Ti-6Al-4V Bolt 160 ksi",  category="Fastener",
+        Fty=145,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=160, Fsu=95,
+        E=16.0, Ec=16.4, G=6.2, nu=0.31,
+        alpha=4.9, k=46, T_max=600,
+        rho=0.160,
+        source="MMPDS-01 §8.1.4 fastener strength levels (NAS6703 class)",
+        notes="Titanium bolt — roughly 60% the density of steel at the same "
+              "strength level, but E is 55% of steel, so it bends further.",
+        estimated_fields=("Fty",),
+    ),
+    Material(
+        name="Inconel 718 Bolt 180 ksi",  category="Fastener",
+        Fty=150,        # ⚠️ ESTIMATED — Fty is not tabulated for fasteners
+        Ftu=180, Fsu=108,
+        E=29.0, Ec=29.0, G=11.2, nu=0.29,
+        alpha=7.2, k=78, T_max=1200,
+        rho=0.297,
+        source="MMPDS-01 §8.1.4 fastener strength levels (NAS6203 class)",
+        notes="Nickel-base superalloy bolt for hot structure.",
+        estimated_fields=("Fty",),
+    ),
 ]
+
+# Display order for grouped UIs. Single source of truth — pages iterate this
+# rather than repeating the tuple, so a new category cannot silently vanish
+# from the Material Library page.
+CATEGORY_ORDER: tuple[str, ...] = (
+    "Aluminum", "Steel", "Titanium", "Stainless", "Fastener",
+)
 
 # Public dict — keyed by display name for app lookups.
 MATERIALS: dict[str, Material] = {m.name: m for m in _materials}
@@ -373,7 +469,7 @@ def names_grouped() -> list[str]:
     """
     grouped = list_by_category()
     out: list[str] = []
-    for cat in ("Aluminum", "Steel", "Titanium", "Stainless"):
+    for cat in CATEGORY_ORDER:
         if cat in grouped:
             for m in grouped[cat]:
                 out.append(m.name)

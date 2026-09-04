@@ -33,6 +33,158 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.3.0 — Bolt Bending module (2026-09-03)
+
+**New module, no change to existing results.** `apps/bolt_bending/` +
+`library/bolt_bending/` + `pages/4_Bolt_Bending.py`. Shear and moment diagrams
+along a bolt in a multi-layer joint, with bending, shear, and combined margins.
+
+Ported from a standalone single-file browser tool. The original and its
+specification are archived, unmodified, under `docs/bolt_bending/`
+(`index.html`, `HANDOFF.md`) as the reference implementation the port was
+checked against. The port's own conventions and backlog live in
+`apps/bolt_bending/CLAUDE.md`.
+
+### Method
+
+The bolt is a beam on axis `x` from head face (0) to nut face (`L`). Each
+plate bears **uniformly over its own thickness** — conservative, since real
+bearing peaks toward the shear planes and shortens the arm. Gaps and spacers
+carry no bearing and pass shear straight through, which is why a spacer adds
+moment arm at no benefit.
+
+```
+w_i   = P_i / t_i                          bearing intensity, lbf/in
+M_res = Σ P_i · x̄_i,  x̄_i = x0_i + t_i/2   residual moment about the head
+R_L   = −M_res / L,   R_0 = −R_L           head/nut couple, adds no net force
+V(u)  = V_0 + w·u,    M(u) = M_0 + V_0·u + ½·w·u²      u = x − x0
+```
+
+Interior peaks at `u* = −V_0/w` where `0 < u* < segment length`; a quadratic
+has no other stationary points, so evaluating `M` there, at every boundary,
+and at both ends finds the true peak.
+
+```
+f_b  = M_max/Z,  f_s = V_max/A,  F_b = k·F_tu     (k = 1.5 working, 1.7 plastic)
+MS_b = F_b/(f_b·FF) − 1        MS_s = F_su/(f_s·FF) − 1
+MS_c = 1/√( max over stations [ R_b² + R_s² ] ) − 1
+```
+
+**The combined check is scanned station by station, not evaluated by pairing
+`M_max` with `V_max`.** Those maxima sit at different places; pairing them is
+both wrong and needlessly harsh. Asserted in
+`tests/bolt_bending/test_kernel.py::test_combined_scans_stations_rather_than_pairing_maxima`.
+
+### Handoff defect §4.1 — FIXED: force closure now gates the margins
+
+`R_0 = −R_L` adds no net force, so it restores equilibrium **only if `ΣP` is
+already zero**. When `ΣP ≠ 0` the shear diagram does not return to zero at the
+nut, `M(L) ≠ 0`, and every margin is meaningless — but the original tool still
+rendered them as ordinary numbers an analyst could paste into a report.
+
+`BoltAnalysis.balanced` now gates `Margins.valid`, and the page suppresses
+every stress and margin behind a warning banner when it is False. The
+tolerance is a **pure ratio**, `|ΣP| > 0.005·max|P_i|`, replacing the original
+test that mixed an absolute 0.5 lbf floor with a scaled term and therefore
+flipped its verdict when the whole problem was scaled
+(`test_imbalance_tolerance_is_a_pure_ratio`).
+
+### Handoff defect §4.2 — NOT fixed, deferred with a stated assumption
+
+`Z` is constant along the bolt, so the critical station is selected by
+`max|M|` rather than `max|M/Z|`. With a shank-to-thread transition or an
+undercut **inside the bending region**, this can check the wrong station and
+report a **non-conservative** margin — and on a long grip with a spacer the
+peak moment often lands near the thread runout.
+
+> **⚠️ ASSUMPTION — no threads in the bending region.** Deferred at the
+> owner's request (2026-09-03). Stated in the kernel docstring, on the Margins
+> tab, and in Method §7. The `d_section` input is the interim mitigation:
+> entering the thread minor diameter is conservative everywhere, exact
+> nowhere. Station-varying section is the top backlog item.
+
+### Materials — new `Fastener` category (6 entries)
+
+Alloy Steel Bolt 160/180 ksi, A286 CRES 160 ksi, H-11 260 ksi, Ti-6Al-4V
+160 ksi, Inconel 718 180 ksi. `Ftu` is the definitional strength level of the
+grade; `Fsu` is the corresponding tabulated fastener shear allowable.
+
+`Fty` is **⚠️ ESTIMATED** on every entry — MMPDS fastener tables do not
+tabulate yield for fasteners at all. `Fcy`, `Fbru` and `Fbry` are deliberately
+left `None`: bearing is a check on the **plate**, not on the fastener.
+
+⚠️ **VERIFY** — these are grade-level nominals for preliminary sizing. A
+released stress report needs the actual part number and diameter from MMPDS-01
+Table 8.1.4 or the procurement spec; allowables vary with diameter, thread
+form, and whether threads lie in the shear plane.
+
+`CATEGORY_ORDER` was added to `library/materials/materials.py` as the single
+source of truth for grouped-UI display order. `names_grouped()` and the
+Material Library page now iterate it instead of each repeating a hardcoded
+4-category tuple — which is why the new category appears in both without
+further edits, and why a future one cannot silently vanish.
+
+### Presentation — the original layout, not the toolkit's default furniture
+
+The first cut of this port used the toolkit's stock page furniture: three tabs
+(Joint / Margins / Method), `ui.components` cards, and Streamlit's default
+spacing. It was **worse than the single-file tool it replaced**, and was
+rebuilt the same day. Recorded because the failure is a general one.
+
+The margins ended up behind a tab, which destroyed the feedback loop that
+justifies the tool — you change a load and watch the moment peak and the
+margin move together. The toolkit's conventions exist to make *unrelated*
+modules feel consistent; they are not a reason to discard a better design that
+already exists. `beam_section` has tabs because it has seven screens of
+content; this module has one.
+
+The page now reproduces the original's composition — one page, two columns,
+white cards on the warm ground, the six-cell results grid, and the two-column
+Method section with tinted equation blocks — with colours remapped to `THEME`
+and a new `BOLT_PALETTE`. `apps/bolt_bending/styles.py` holds that stylesheet;
+`test_nothing_is_hidden_behind_a_tab` pins the single-page rule.
+
+Two rendering traps found by screenshotting the running app, both invisible to
+a green test suite:
+
+- **`st.html()` silently strips `<svg>`.** It sanitises with an HTML-only
+  profile, so the figure column rendered blank with no error and nothing in
+  the logs. Raw HTML in this toolkit must go through
+  `st.markdown(..., unsafe_allow_html=True)`, which renders SVG correctly.
+  (`st.iframe` is not an alternative — it takes a URL, not markup.) Pinned by
+  `test_the_figure_actually_reaches_the_page`.
+- **Axis tick labels overprinted.** Ticks sit at the two data extremes plus
+  zero, but a diagram that barely crosses zero puts two of them on the same
+  pixel — the default stack dips to M = −0.4 against a 278.7 peak, so its
+  "−0.400" and "0" labels collided. Ticks are now placed extremes-first and
+  zero is dropped when it would collide; the zero line itself is already drawn.
+
+### Verification
+
+`tests/bolt_bending/` — 53 tests, green. The handoff §6 case is asserted
+**station by station** against its published table, and reproduces every
+number: `M_res` = −60 lb·in, `R_L` = +56.60 lbf, peak `M` = 278.7 lb·in at
+x = 0.546 in (`in plate 2`), `V_max` = −1056.6 lbf, `Z` = 0.003069 in³,
+`f_b` = 90.8 ksi, `MS_b` = `MS_c` = +1.64.
+
+The standing arithmetic check — **`V(L)` = `M(L)` = 0** for every balanced
+stack — is asserted across four stacks, not just the golden one. The second
+case §6 suggested (symmetric double shear, `M_res` = 0 by symmetry, closed
+form `M_max = P(2·t_outer + t_inner)/8`) is asserted too. `AppTest` executes
+`render()` headlessly, including every fastener material and the unbalanced
+case.
+
+### Not modelled (unchanged from the original, stated on the page)
+
+Clamp-up, preload, prying, axial load, bearing peaking, plate strength. The
+load split between layers is an **input, not a result** — it is statically
+indeterminate and should come from relative plate stiffness or a bounding
+sensitivity study. Plate bearing, shear-out, net section and lug strength are
+separate checks; a bolt-bending tool that ignores them can hand back a
+comfortable margin on the wrong failure mode.
+
+---
+
 ## v2.2.1 — element-wise crippling (fixes unconservative section-average) (2026-07-17)
 
 **Results-changing.** The `σ_c vs Fcc` crippling row is now **element-wise**:

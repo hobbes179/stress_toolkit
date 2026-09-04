@@ -124,3 +124,28 @@ PLOT_PALETTE = dict(
     background       = "#ffffff",   # plot background (always white)
     contour_cmap     = "jet",        # blue→cyan→green→yellow→red (traditional stress)
 )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Bolt-diagram palette — used by the hand-built SVG in
+# apps/bolt_bending/plotting.py. Kept here for the same reason as
+# PLOT_PALETTE: no page or plotting module hardcodes a hex value.
+#
+# Shear and moment need to stay separable in colour, in print, and in
+# greyscale, so they are a blue/oxblood pair rather than two hues of one
+# family. White ground throughout, matching the matplotlib figures.
+# ──────────────────────────────────────────────────────────────────────────
+BOLT_PALETTE = dict(
+    shear        = THEME.accent,     # shear diagram, bearing arrows
+    moment       = "#8c2f39",        # moment diagram, head/nut reactions
+    ink          = THEME.text,       # outlines, axis rules
+    muted        = THEME.muted,      # tick labels, annotations
+    rule         = THEME.border,     # panel dividers
+    rule_soft    = THEME.rule_soft,  # segment boundary lines
+    bolt_fill    = "#edf2f3",        # bolt shank body
+    cap_fill     = "#d7e0e3",        # head and nut blocks
+    plate_fill   = "#e4ebee",        # plate bodies
+    hatch_bg     = "#f7f9f9",        # spacer hatch ground
+    hatch_line   = "#c9d4d8",        # spacer hatch strokes
+    background   = "#ffffff",        # figure ground (always white, like PLOT_PALETTE)
+)

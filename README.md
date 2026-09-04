@@ -12,6 +12,22 @@ built with Python and Streamlit.
   imported/arbitrary sections — MMPDS-01 allowables, interactive FEM stress
   contour, and an in-app validation page.
 
+- **Material Library** — 30 entries in 5 categories (aluminium, steel,
+  titanium, stainless, fastener) with room-temperature MMPDS-01 allowables and
+  physical properties. Estimated values are flagged rather than shown bare.
+
+- **Tie-Rod Layout** — rigid bodies on two-force members with spherical
+  bearings both ends. Build the assembly, search for a rod layout that
+  restrains it and survives losing any one rod, then check margins, mechanism
+  modes, and a rod-count/slenderness trade curve.
+
+- **Bolt Bending** — shear and moment diagrams along a bolt in a multi-layer
+  joint. Uniform bearing per layer, spacers that add moment arm with no
+  support, and the head/nut couple that closes the moment. Margins on bending,
+  shear, and a combined interaction scanned station by station rather than
+  pairing the two maxima. Force closure is checked, and failing it suppresses
+  every margin instead of printing a number that looks trustworthy.
+
 More modules will be added as siblings under `apps/`.
 
 ## Local installation

@@ -44,25 +44,42 @@ It is designed to be:
 ```
 stress_toolkit/
 ├── Home.py                          ← Streamlit Cloud entry point (landing page)
-├── pages/
-│   └── 1_Beam_Section_Stress.py    ← Auto-discovered page wrapper
-├── apps/
-│   └── beam_section/
-│       ├── app.py                   ← Streamlit render() for beam module
-│       ├── calculations.py          ← Stress + MS engine (no Streamlit deps)
-│       └── plotting.py              ← matplotlib figures (no Streamlit deps)
-├── library/
+├── version.py                       ← __version__ + git SHA, stamped in page footers
+├── pages/                           ← Thin wrappers, auto-discovered by Streamlit
+│   ├── 1_Beam_Section_Stress.py
+│   ├── 2_Material_Library.py
+│   ├── 3_Tie_Rod_Layout.py
+│   └── 4_Bolt_Bending.py
+├── apps/                            ← UI only. The ONLY place Streamlit is imported.
+│   ├── beam_section/
+│   │   ├── app.py                   ← Streamlit render() for the beam module
+│   │   ├── calculations.py          ← Stress + MS engine (no Streamlit deps)
+│   │   ├── plotting.py              ← matplotlib figures (no Streamlit deps)
+│   │   └── plotting_interactive.py  ← Plotly stress contour
+│   ├── material_library/app.py
+│   ├── tierod/                      ← render.py + ui_*.py; CLAUDE.md of its own
+│   └── bolt_bending/                ← app.py + plotting.py (SVG) + method.py
+│       └── CLAUDE.md                ← module conventions + backlog
+├── library/                         ← Pure engineering math. NEVER imports Streamlit.
 │   ├── materials/
-│   │   ├── materials.py             ← Material dataclass + MATERIALS dict
+│   │   ├── materials.py             ← Material dataclass, MATERIALS, CATEGORY_ORDER
 │   │   └── README.md                ← Schema + how-to-add docs
-│   └── shapes/
-│       ├── shapes.py                ← Section base class + 11 shape subclasses
-│       └── README.md                ← How-to-add-a-shape docs
+│   ├── shapes/
+│   │   ├── shapes.py                ← Section base class + 11 shape subclasses
+│   │   └── README.md                ← How-to-add-a-shape docs
+│   ├── analysis/                    ← solvers, FEM, polygon props, crippling
+│   ├── tierod/                      ← tie-rod kernel
+│   └── bolt_bending/kernel.py       ← bolt statics + margins
 ├── ui/
-│   ├── theme.py                     ← Color tokens: THEME, PLOT_PALETTE
+│   ├── theme.py                     ← Color tokens: THEME, PLOT_PALETTE, BOLT_PALETTE
 │   ├── styles.py                    ← CSS injection (call inject_css() at top of each page)
 │   └── components.py                ← Reusable widgets (section_header, info_card, etc.)
+├── tests/                           ← pytest; tests/<module>/ per module
+├── docs/                            ← Per-module source material and handoffs
+│   ├── tierod/
+│   └── bolt_bending/                ← archived standalone tool + its HANDOFF.md
 ├── requirements.txt
+├── CHANGELOG.md                     ← Authoritative record of results-changing decisions
 ├── README.md
 └── CLAUDE.md                        ← This file
 ```
@@ -298,15 +315,28 @@ axis and principal-axis angles are shown as contour overlays.
 
 ## Materials library
 
-24 alloys in 4 categories: Aluminum, Steel, Titanium, Stainless.
+30 entries in 5 categories: Aluminum, Steel, Titanium, Stainless, **Fastener**.
 Source: MMPDS-01 / MIL-HDBK-5J (structural steels from AISC/ASTM).
 
 Each material stores: Fty, Ftu, Fcy, Fsu, Fbru, Fbry, E, Ec, G, ν,
 alpha (CTE), k (thermal conductivity), T_max, rho, source, notes.
 
+`CATEGORY_ORDER` in `materials.py` is the single source of truth for
+display order in grouped UIs. Add a new category there or it will not
+appear — `names_grouped()` and the Material Library page both iterate it.
+
 Properties not available from MMPDS are flagged with `⚠️ ESTIMATED` and
 listed in `Material.estimated_fields`. Current estimated fields: Fbru/Fbry
-for A36, A572, and 300M.
+for A36, A572, and 300M; **Fty on every Fastener entry** (MMPDS fastener
+tables do not tabulate yield for fasteners at all).
+
+**Fasteners (v2.3.0)** are bolt *strength levels*, not bar or sheet stock:
+Ftu is the definitional minimum for the grade and Fsu the corresponding
+tabulated fastener shear allowable. Fcy/Fbru/Fbry are deliberately `None` —
+bearing is a check on the **plate**, not on the fastener.
+⚠️ VERIFY — grade-level nominals for preliminary sizing only; a released
+stress report needs the actual part number and diameter from MMPDS-01
+Table 8.1.4 or the procurement spec.
 
 ---
 
@@ -473,11 +503,23 @@ shear flow (old item 6, for open sections)._
 
 Each new module follows the same pattern:
 - `apps/<module_name>/app.py` (render function)
-- `apps/<module_name>/calculations.py` (pure engineering math)
 - `apps/<module_name>/plotting.py` (figures)
 - `pages/N_Title.py` (thin wrapper)
+- `tests/<module_name>/` (pytest gates)
+
+The engineering math goes in `library/<module_name>/` — the convention the
+`tierod` and `bolt_bending` modules follow, and the one to use for new work.
+`apps/beam_section/calculations.py` predates it and stays where it is.
+Nothing under `library/` may import Streamlit. A module large enough to need
+its own conventions gets an `apps/<module>/CLAUDE.md` (see `tierod`,
+`bolt_bending`).
 
 Planned modules:
+
+_Shipped since this list was written: **Tie-Rod Layout** (`apps/tierod/`) and
+**Bolt Bending** (`apps/bolt_bending/`, v2.3.0). Bolt Bending's own backlog —
+variable section, load-split assistant, show-work mode, plate bearing and
+shear-out — lives in `apps/bolt_bending/CLAUDE.md`, not here._
 
 11. **Column Buckling** (`apps/column_buckling/`)
     Euler and Johnson column buckling, effective length factors, margin of

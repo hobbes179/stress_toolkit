@@ -57,7 +57,22 @@ MODULES = [
         "animated mechanism modes, and a rod-count/slenderness trade curve.",
         "pages/3_Tie_Rod_Layout.py",
     ),
+    (
+        "🔧",
+        "Bolt Bending",
+        "Shear and moment diagrams along a bolt in a multi-layer joint. "
+        "Uniform bearing per layer, spacers that add arm with no support, "
+        "and the head/nut couple that closes the moment. Margins on bending, "
+        "shear, and a combined interaction scanned station by station rather "
+        "than pairing the two maxima.",
+        "pages/4_Bolt_Bending.py",
+    ),
 ]
+
+# Cards per row. Four modules in one row squeezes every description into a
+# narrow column; two rows of two keeps them readable. Rows wrap automatically
+# as modules are added.
+CARDS_PER_ROW = 2
 
 
 # ── Header ────────────────────────────────────────────────────────────────
@@ -75,6 +90,7 @@ st.markdown(
     f"<span>Classical + FEM solvers</span>"
     f"<span>11 shapes + custom import</span>"
     f"<span>Interactive stress contour</span>"
+    f"<span>Bolt-bending diagrams</span>"
     f"<span>Validation built in</span>"
     f"</div></div>",
     unsafe_allow_html=True,
@@ -85,36 +101,38 @@ st.divider()
 # ── Module cards ──────────────────────────────────────────────────────────
 section_header("Available Modules")
 
-cols = st.columns(len(MODULES), gap="large")
-
-for col, (icon, title, desc, page_path) in zip(cols, MODULES):
-    with col:
-        # Description block — rounded top, open bottom border so the
-        # page_link button below reads as part of the same card unit.
-        st.markdown(
-            f"<div style='"
-            f"background:{t.bg3};"
-            f"border:1px solid {t.border};"
-            f"border-bottom:none;"
-            f"border-radius:8px 8px 0 0;"
-            f"padding:24px 24px 20px;'>"
-            f"<div style='font-size:36px;line-height:1;margin-bottom:14px;'>{icon}</div>"
-            f"<div style='font-size:16px;font-weight:700;color:{t.accent2};"
-            f"margin-bottom:10px;'>{title}</div>"
-            f"<div style='font-size:12px;color:{t.muted};line-height:1.7;'>{desc}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        # Navigation button — sits flush against the card above.
-        # use_container_width spans the full column width.
-        try:
-            st.page_link(
-                page_path,
-                label=f"Open {title}  →",
-                use_container_width=True,
+for row_start in range(0, len(MODULES), CARDS_PER_ROW):
+    row = MODULES[row_start:row_start + CARDS_PER_ROW]
+    # Pad the final row so a lone card keeps the same width as a full row's.
+    cols = st.columns(CARDS_PER_ROW, gap="large")
+    for col, (icon, title, desc, page_path) in zip(cols, row):
+        with col:
+            # Description block — rounded top, open bottom border so the
+            # page_link button below reads as part of the same card unit.
+            st.markdown(
+                f"<div style='"
+                f"background:{t.bg3};"
+                f"border:1px solid {t.border};"
+                f"border-bottom:none;"
+                f"border-radius:8px 8px 0 0;"
+                f"padding:24px 24px 20px;'>"
+                f"<div style='font-size:36px;line-height:1;margin-bottom:14px;'>{icon}</div>"
+                f"<div style='font-size:16px;font-weight:700;color:{t.accent2};"
+                f"margin-bottom:10px;'>{title}</div>"
+                f"<div style='font-size:12px;color:{t.muted};line-height:1.7;'>{desc}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
             )
-        except Exception:
-            st.caption(f"Select **{title}** from the sidebar to open this module.")
+            # Navigation button — sits flush against the card above.
+            # use_container_width spans the full column width.
+            try:
+                st.page_link(
+                    page_path,
+                    label=f"Open {title}  →",
+                    use_container_width=True,
+                )
+            except Exception:
+                st.caption(f"Select **{title}** from the sidebar to open this module.")
 
 
 # ── Footer ────────────────────────────────────────────────────────────────
