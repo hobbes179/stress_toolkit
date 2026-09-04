@@ -14,6 +14,8 @@ original and its specification are archived under `docs/bolt_bending/`.
 | File | Role |
 |---|---|
 | `library/bolt_bending/kernel.py` | All the mechanics. **Pure** — no Streamlit, no DOM, no globals. The natural seam for tests. |
+| `library/bolt_bending/refined.py` | Refined bearing distribution — beam on an elastic foundation. Pure. |
+| `apps/bolt_bending/refined_view.py` | HTML blocks for the refined bearing pass. Pure. |
 | `apps/bolt_bending/plotting.py` | The three-panel figure, as an SVG string. Pure; takes a `BoltAnalysis`. |
 | `apps/bolt_bending/method.py` | The Method section, as HTML. Pure data. |
 | `apps/bolt_bending/styles.py` | Page CSS — the original tool's stylesheet on toolkit tokens. Pure. |
@@ -32,11 +34,70 @@ toolkit. Do not break them without asking.
   state, no DOM. Same input, same output.
 - **`plotting.py`, `method.py` and `styles.py` stay Streamlit-free** as well.
   `app.py` is the only file that may import `streamlit`.
-- **One page. Nothing behind a tab.** The stack, the diagrams, the margins and
+- **The page is never fragmented.** The stack, the diagrams, the margins and
   the checks must all be visible at once — the point of the tool is changing a
   load and watching the moment peak and the margin move together. Splitting
-  that across tabs is the regression that forced the 2026-09-03 rebuild;
-  `test_nothing_is_hidden_behind_a_tab` pins it.
+  that across tabs is the regression that forced the 2026-09-03 rebuild.
+  **There are now no tabs at all**; `test_the_page_is_never_fragmented` pins it.
+- **The refinement is a toggle, not a second screen.** It was briefly a second
+  tab (v2.4.0); it became a sidebar toggle at the owner's request on
+  2026-09-04. One analysis drives the whole page — figure, checks and margins
+  — because two peak moments on one screen is how the wrong one ends up in a
+  report. The baseline-vs-refined comparison is a *grid inside* the refined
+  supplement, not a parallel set of page results.
+- **The baseline stays the default answer.** The toggle is off by default. The
+  refined pass is less-conservative, so it must never appear without its basis
+  and assumptions — `refined_view.supplement()` carries both, and it is
+  rendered directly below the margins it qualifies.
+- **The assumption in force is stated in words, in both states.** A toggle that
+  silently moves the peak moment by 15% is a trap.
+  `refined_view.model_strip_html()` sits above the Strength card either way;
+  `test_the_bearing_model_is_stated_in_words_in_both_states` pins it.
+- **Closure is gated on the INTEGRATED diagrams, not just ΣP.** `ΣP = 0` is
+  necessary, not sufficient: a layer carrying load with zero thickness applies
+  no bearing (`w = P/t` is guarded to 0), so its load counts in ΣP and `M_res`
+  but never reaches the diagrams. That shipped as a bug — margins displayed
+  with `V(L) = 1000 lbf`. `balanced` now also requires `|V(L)|` and `|M(L)|`
+  within tolerance, and `analyse()` reports `starved` so the message can name
+  the layer. Both bearing models must agree on `balanced` for the same stack;
+  there is a test for that.
+- **Solve quality is measured on the solve, never with a condition number.**
+  `np.linalg.cond` was tried and removed: insensitive to `k`, scales as h⁻⁴ and
+  d⁴, so it failed an ordinary 1 in bolt and got worse as the mesh improved.
+  Use `residual` and `load_error`; the latter is taken **before** the strips
+  are normalised onto the entered load, because the normalisation would
+  otherwise mask a bad solve. Thresholds are set from measured ranges recorded
+  in the module constants — re-derive them, do not nudge them.
+- **`f_s = κ·V/A`, and κ depends on what `Fsu` is.** 1.0 against an MMPDS
+  fastener allowable (already stated on the shank area); 4/3 against a material
+  shear strength (the peak on a solid round). The app derives it from the
+  material's `category`. Worth 33% on the shear margin, so it is stated on the
+  Strength card and the results cell is relabelled — never applied silently.
+- **The stack is edited with native widgets, in the sidebar.** Moved there
+  2026-09-04. `st.number_input`, never `st.data_editor`: the stepper buttons
+  and the scroll-wheel nudge come from the native input and a NumberColumn has
+  neither. **Two number inputs to a row, maximum** — Streamlit drops the
+  steppers when a column gets narrow, and three-to-a-row in this sidebar was
+  under that threshold while still looking fine in a test. The sidebar is
+  widened to 30rem in `styles.py` for the same reason. Measured in a browser,
+  not guessed; re-check the steppers if the layout is ever re-compacted.
+  `test_the_stack_is_edited_with_native_number_inputs` pins the widget type.
+- **A gap has no load field at all** — not a disabled one, not a zeroed one,
+  not a placeholder holding an empty column. A spacer carries no bearing, so a
+  load box beside it invites a number the model will silently discard.
+  `test_a_gap_gets_no_load_field_at_all` pins it.
+- **Row widget keys are built from a stable row id, never the list position.**
+  Deleting row 1 would otherwise shift every key below it and Streamlit would
+  replay row 2's stored value into row 1. `_reset()` must drop every `bb::`
+  key for the same reason.
+- **Session state is shape-checked, not presence-checked.** Streamlit Cloud
+  redeploys under live sessions, so a browser holding the previous format must
+  be reseeded rather than crash the page on its next rerun.
+  `test_stale_session_state_from_an_older_deploy_does_not_crash`.
+- **Station names come from the physical layers, not the strips.** The refined
+  analysis is 24 strips per plate, so `layer_name_at` on it reports "plate 36".
+  Pass the baseline as `names=` to `peak_html` / `strength_html`, and
+  `refined_view.groups()` to the figure.
 - **Render HTML with `st.markdown(..., unsafe_allow_html=True)`, never
   `st.html()`.** `st.html` sanitises with an HTML-only profile that strips
   `<svg>` **silently** — the figure column just comes out blank, with no error
@@ -124,6 +185,58 @@ often lands near the thread runout, which is exactly where it bites.
 To do it properly: let diameter vary with station (at minimum a shank/thread
 transition at a user-entered `x`), then select the critical station by
 `max(M/Z)` **and** by the interaction scan, not by `max(M)`.
+
+### §5.2 Phase 2 — beam on elastic foundation — ✅ PARTIALLY DONE (v2.4.0)
+
+The refined bearing pass (`library/bolt_bending/refined.py`, sidebar toggle)
+implements the
+bearing-distribution half of this: each plate gets an unknown rigid offset with
+a Winkler bed between it and the bolt, and the offsets are solved so every
+plate transfers exactly the entered load. One linear solve, no iteration.
+
+Each plate carries **its own foundation modulus**, taken from a per-layer
+material selector (2026-09-04): a steel doubler and an aluminium skin have
+genuinely different bearing stiffness, the peaking follows the stiffer plate,
+and one averaged bed would put it on the wrong one. `refined_analysis` takes
+either a scalar (one bed) or a per-layer sequence; a short or gappy sequence
+falls back to the first stated modulus rather than leaving a plate on a
+zero-stiffness bed, which would make the solve singular. `RefinedResult.
+mixed_stack` drives the extra material/k columns in the per-plate table and
+stops the basis card advertising a single `k` no plate actually has.
+
+What it deliberately does **not** do, and what remains of §5.2:
+
+- **Composite plates are out of scope.** `k = E_plate` is a Tate & Rosenfeld
+  *metallic* bearing derivation, and the Huth cross-check ships the metallic
+  constants (b = 3.0). A composite laminate needs its own bearing model:
+  direction-dependent modulus, a different Huth constant set (b ≈ 4.2 for
+  graphite/epoxy), CMH-17 rather than MMPDS allowables, and progressive
+  bearing damage instead of yield. Nothing stops a laminate modulus being
+  entered by hand once custom materials exist, but the basis string would then
+  be wrong, so the material list is deliberately limited to metallics.
+- **The load split is still an input.** Determining it needs the plates' own
+  in-plane stiffness, which is a different model. This refines only where
+  within each plate's thickness the entered load acts.
+- **No clearance or one-sided contact.** The bed is linear and two-sided, so a
+  negative reaction means bearing on the far side of the hole — right for a
+  close fit, wrong for a sloppy one. Adding it makes the solve iterative.
+- **No plastic bearing redistribution** at ultimate.
+
+Key implementation notes, so they are not relearned the hard way:
+
+- **Pinning `w` at the head and nut is load-bearing, not cosmetic.** Without it
+  the system has two rigid-body null modes and is singular. An early draft used
+  a least-squares minimum-norm solve; it looked plausible and drifted with mesh
+  (239.4 coarse vs 235.1 fine). The pinned reactions *are* `R_0` and `R_L`.
+  `test_converged_and_stable_in_mesh` is the gate.
+- **The rigid-bolt limit is the trust anchor.** As `k → 0`, `w ≡ 0`, so
+  `q = k·d_i` — uniform bearing, exactly. The refined model provably degenerates
+  to the baseline, which is what makes it a correction rather than a rival.
+- **`k = E_plate` is derived, not guessed** — the Tate & Rosenfeld bearing term
+  (`δ = P/(E·t)` against the Winkler `P = k·δ·t`). Only the *bearing* part
+  belongs in `k`: bolt bending is already computed from EI, so folding in a
+  lumped joint compliance (Huth, Swift) would double-count it. Huth is carried
+  as an independent cross-check instead — ⚠️ its constants are unverified.
 
 ### §5.2 — Load-split assistant
 

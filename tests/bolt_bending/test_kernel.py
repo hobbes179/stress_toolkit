@@ -303,4 +303,38 @@ def test_screening_passes_a_clean_case():
     a = analyse(default_stack())
     checks = screening_checks(a, GOLDEN_SECTION)
     assert checks[0].ok                      # force closure
-    assert "reacted by" in checks[1].text    # residual moment closed
+    assert "end pair" in checks[1].text      # residual moment closed
+    # the couple is a bookkeeping device; the check must not claim the
+    # head bears sideways, which it cannot (see kernel module docstring)
+    assert "clamp pressure" in checks[1].text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Shear basis — what Fsu is stated on
+# ══════════════════════════════════════════════════════════════════════════
+def test_shear_peak_factor_defaults_to_the_fastener_basis():
+    """1.0 by default: this is a bolt tool, and MMPDS Table 8.1.4 tabulates
+    fastener shear on the shank area, so V/A is already the matching basis."""
+    assert Allowables(Ftu=160.0, Fsu=95.0).shear_peak_factor == 1.0
+
+
+def test_the_peak_factor_scales_the_shear_stress_and_the_margin():
+    a = analyse(default_stack())
+    base = margins(a, GOLDEN_SECTION, Allowables(Ftu=160.0, Fsu=95.0))
+    peak = margins(a, GOLDEN_SECTION,
+                   Allowables(Ftu=160.0, Fsu=95.0, shear_peak_factor=4 / 3))
+    assert peak.f_s == pytest.approx(base.f_s * 4 / 3)
+    assert peak.MS_shear < base.MS_shear
+    assert peak.MS_bending == pytest.approx(base.MS_bending)   # bending untouched
+
+
+def test_the_peak_factor_reaches_the_interaction_scan_too():
+    """A factor applied to the standalone shear check but not to the scan
+    would let the two disagree about the same station."""
+    short = [Layer("plate", 0.06, 4000.0), Layer("plate", 0.06, -4000.0)]
+    a = analyse(short)
+    base = margins(a, GOLDEN_SECTION, Allowables(Ftu=160.0, Fsu=95.0))
+    peak = margins(a, GOLDEN_SECTION,
+                   Allowables(Ftu=160.0, Fsu=95.0, shear_peak_factor=4 / 3))
+    assert peak.R_s > base.R_s
+    assert peak.MS_combined < base.MS_combined

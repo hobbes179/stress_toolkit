@@ -16,8 +16,8 @@ MODEL
 The bolt is a straight beam whose axis x runs from the head bearing face
 (x = 0) to the nut face (x = L), where L is the total grip. The only
 transverse loads are the bearing pressures the plates apply to the shank plus
-whatever the head and nut react. Bending is taken in a single plane, so the
-problem is one-dimensional.
+the end pair that closes the residual moment (see below). Bending is taken in
+a single plane, so the problem is one-dimensional.
 
 Each plate bears **uniformly over its own thickness** — the conservative
 baseline. Real bearing peaks toward the shear planes, which shortens the
@@ -28,7 +28,7 @@ at no benefit.
     w_i   = P_i / t_i                          bearing intensity, lbf/in
     ΣP_i  = 0                                  force closure (checked, §4.1)
     M_res = Σ P_i · x̄_i,  x̄_i = x0_i + t_i/2   residual moment about the head
-    R_L   = −M_res / L,   R_0 = −R_L           head/nut couple that closes M
+    R_L   = −M_res / L,   R_0 = −R_L           end pair that closes M (below)
 
 Segment recursion, u = x − x0, constant w:
 
@@ -39,6 +39,37 @@ Start V = R_0, M = 0 at the head, walk the segments in order, carry end
 values into the next. Shear is piecewise linear, moment piecewise quadratic,
 so the only interior stationary point of M is where V = 0, at u* = −V_0/w,
 taken only when 0 < u* < segment length. R_L is added to V at the nut.
+
+═══════════════════════════════════════════════════════════════════════════
+CLOSING THE RESIDUAL MOMENT — ⚠️ ASSUMPTION
+═══════════════════════════════════════════════════════════════════════════
+`R_0` and `R_L` are equal, opposite and separated by L, so their resultant is
+a **pure couple of magnitude M_res**. That resultant is the only thing this
+model actually asserts; the split into two lateral point forces is a
+bookkeeping device for delivering it, not a claim about a specific contact.
+
+It is NOT the head and nut bearing sideways. Nothing at the underside of a
+head can react a lateral force — there is no surface for it to push against.
+What physically reacts the residual moment in a preloaded joint is the
+**redistribution of clamp pressure across the head and nut undersides**: as
+the bolt tries to tilt, the annular contact pressure shifts toward one edge.
+That shift is a moment, and it needs no change in bolt tension while the
+annulus stays in contact. For a 3/8 hex head the annulus carries roughly
+0.10·P_clamp lb·in before the light-side edge lifts; past that the contact
+patch collapses to one side, the reaction resultant walks off-axis, and the
+bolt does pick up axial tension — classic prying, which is not modelled here.
+
+The choice matters, because a force pair and an end moment are equivalent
+globally but not locally: the pair injects shear at the ends (V(0) = R_0 ≠ 0)
+where an end moment would not. On the §6 verification case the three
+defensible closures of the same M_res give
+
+    force pair at head and nut (this model)   peak |M| = 278.7 lb·in
+    end moment at the head alone             peak |M| = 250.0 lb·in
+    end moments split head/nut               peak |M| = 280.0 lb·in
+
+— about a 12% spread, with this model near the top of it. Not exposed as an
+option: the analyst's lever is the loads, not the closure idealisation.
 
 ═══════════════════════════════════════════════════════════════════════════
 FORCE CLOSURE — handoff defect §4.1, fixed here
@@ -52,8 +83,10 @@ the nut, M(L) ≠ 0, and every margin below is meaningless.
 invalid result as ordinary numbers — the UI badges them.
 
 Physically a non-zero ΣP means something outside the model is reacting the
-difference: friction from clamp-up, transverse head/nut bearing, or — most
-often — an input error such as a missing layer or a sign flip.
+difference: friction at the faying surfaces from clamp-up, some restraint
+outside the grip, or — most often — an input error such as a missing layer or
+a sign flip. It is NOT reacted at the head or nut: those bear axially on the
+plate faces and have nothing to push against laterally.
 
 ═══════════════════════════════════════════════════════════════════════════
 SECTION — constant along the bolt (handoff defect §4.2 NOT fixed)
@@ -160,12 +193,30 @@ class Allowables:
                         a fully plastic shape factor of 1.7; 1.5 is the usual
                         defensible working value.
         fitting_factor: Fitting factor applied to the applied stress.
+        shear_peak_factor:
+                        Multiplier turning the average shear V/A into the value
+                        compared against `Fsu`. **This depends on what Fsu is**,
+                        and getting it wrong is worth 33%:
+
+                        • **1.0 for a fastener allowable.** MMPDS-01 Table
+                          8.1.4 tabulates fastener shear as ultimate load over
+                          the shank area, so it is already an average and V/A
+                          is the matching basis.
+                        • **4/3 for a material shear strength.** On a solid
+                          round the parabolic shear distribution peaks at 4/3
+                          of the average, so a material Fsu must be compared
+                          against that peak.
+
+                        Defaults to 1.0 — the fastener case, which is what this
+                        tool is for. The app sets it from the selected
+                        material's category and says so on the Strength card.
     """
 
     Ftu: float
     Fsu: float
     k_bending: float = 1.5
     fitting_factor: float = 1.0
+    shear_peak_factor: float = 1.0
 
     @property
     def Fb(self) -> float:
@@ -215,8 +266,24 @@ class BoltAnalysis:
     M_max: Station                # station with the largest |M|
     V_max: float                  # largest |V| (signed value at that station)
     closes_moment: bool           # whether the R0/RL couple was applied
-    balanced: bool                # force closure satisfied (§4.1)
+    balanced: bool                # closure satisfied (§4.1) — see `closure_*`
     imbalance_tol: float          # the lbf threshold `balanced` was tested against
+    closure_V: float = 0.0        # |V(L)| after R_L, lbf — 0 in a valid model
+    closure_M: float = 0.0        # |M(L)|, lb·in — 0 when close_moment is True
+    moment_tol: float = 0.0       # the lb·in threshold `closure_M` was tested against
+    starved: tuple[int, ...] = () # 1-based layers carrying load with no thickness
+
+    @property
+    def closes(self) -> bool:
+        """True when the integrated diagrams actually return to zero.
+
+        Distinct from `sum_P == 0`: a layer carrying load with **no thickness**
+        contributes to ΣP and to the residual moment but applies no bearing
+        (w = P/t is guarded to zero), so ΣP can be zero while V(L) and M(L)
+        are not. `balanced` requires both.
+        """
+        return (self.closure_V <= self.imbalance_tol
+                and self.closure_M <= self.moment_tol)
 
     @property
     def gap_thickness(self) -> float:
@@ -243,7 +310,7 @@ class Margins:
     """
 
     f_b: float                    # bending stress M_max/Z, ksi
-    f_s: float                    # average shear V_max/A, ksi
+    f_s: float                    # shear stress κ·V_max/A, ksi (κ = peak factor)
     F_b: float                    # bending allowable k·Ftu, ksi
     MS_bending: float
     MS_shear: float
@@ -271,8 +338,10 @@ def analyse(layers: Sequence[Layer], close_moment: bool = True) -> BoltAnalysis:
 
     Args:
         layers:       Stack ordered head to nut.
-        close_moment: Apply the R_0/R_L couple that reacts the residual moment
-                      at head and nut. Turn off to see the raw imbalance.
+        close_moment: Apply the R_0/R_L end pair whose resultant is the
+                      couple reacting the residual moment. Turn off to see the
+                      raw imbalance. See "Closing the residual moment" above
+                      for what that couple physically represents.
 
     Returns:
         A `BoltAnalysis`. Both diagrams close at the nut (V(L) = M(L) = 0)
@@ -337,10 +406,31 @@ def analyse(layers: Sequence[Layer], close_moment: bool = True) -> BoltAnalysis:
         if abs(p.V) > abs(V_max):
             V_max = p.V
 
-    # ── force closure (handoff §4.1) ──────────────────────────────────
+    # ── closure (handoff §4.1, extended) ──────────────────────────────
+    # ΣP = 0 is necessary but NOT sufficient. A layer carrying load with zero
+    # (or negative, hence clamped) thickness applies no bearing, so its load
+    # counts here and in M_res but never reaches the diagrams: ΣP can be zero
+    # while V(L) and M(L) are not. Gating on the input sum alone let that case
+    # through with confident, meaningless margins. Gate on the OUTPUT too.
     peak_P = max((abs(s.P) for s in segments), default=0.0)
     tol = IMBALANCE_TOL * peak_P
-    balanced = abs(sum_P) <= tol
+    # Moment scale from load × grip, not from max|M| — when the diagram is
+    # wrong, max|M| is inflated and would slacken its own tolerance.
+    moment_tol = tol * L
+
+    closure_V = abs(V + RL)
+    # M(L) is deliberately non-zero when the end pair is switched off; the
+    # "unreacted residual" check covers that case instead.
+    closure_M = abs(M) if close_moment else 0.0
+
+    starved = tuple(
+        i for i, s in enumerate(segments, start=1)
+        if s.kind == "plate" and s.t <= 0.0 and abs(s.P) > 0.0
+    )
+
+    balanced = (abs(sum_P) <= tol
+                and closure_V <= tol
+                and closure_M <= moment_tol)
 
     return BoltAnalysis(
         segments=segments,
@@ -355,6 +445,10 @@ def analyse(layers: Sequence[Layer], close_moment: bool = True) -> BoltAnalysis:
         closes_moment=close_moment,
         balanced=balanced,
         imbalance_tol=tol,
+        closure_V=closure_V,
+        closure_M=closure_M,
+        moment_tol=moment_tol,
+        starved=starved,
     )
 
 
@@ -367,8 +461,10 @@ def margins(
     """Bending, shear, and combined margins of safety.
 
         f_b  = M_max / Z            F_b = k · Ftu
-        f_s  = V_max / A            (average; the true peak on a round is 4/3
-                                     of this — add it yourself if required)
+        f_s  = κ · V_max / A        κ = Allowables.shear_peak_factor:
+                                     1.0 against a fastener allowable (already
+                                     an average), 4/3 against a material shear
+                                     strength (the peak on a solid round)
         MS_b = F_b  / (f_b · FF) − 1
         MS_s = Fsu  / (f_s · FF) − 1
         MS_c = 1 / √( max over stations [ R_b² + R_s² ] ) − 1
@@ -391,8 +487,13 @@ def margins(
     Fb_psi = allowables.Fb * 1000.0
     Fsu_psi = allowables.Fsu * 1000.0
 
+    # The shear peaking factor scales the AVERAGE V/A up to whatever basis
+    # `Fsu` is stated on — see Allowables.shear_peak_factor. It must be applied
+    # to the interaction scan as well as the standalone check, or the two would
+    # disagree about the same station.
+    kappa = allowables.shear_peak_factor or 1.0
     f_b_psi = abs(analysis.M_max.M) / Z if Z > 0 else math.inf
-    f_s_psi = abs(analysis.V_max) / A if A > 0 else math.inf
+    f_s_psi = kappa * abs(analysis.V_max) / A if A > 0 else math.inf
 
     # combined interaction scanned station by station
     worst = 0.0
@@ -400,7 +501,8 @@ def margins(
     R_b = R_s = 0.0
     for p in analysis.stations:
         rb = abs(p.M) * FF / (Z * Fb_psi) if Z > 0 and Fb_psi > 0 else math.inf
-        rs = abs(p.V) * FF / (A * Fsu_psi) if A > 0 and Fsu_psi > 0 else math.inf
+        rs = (kappa * abs(p.V) * FF / (A * Fsu_psi)
+              if A > 0 and Fsu_psi > 0 else math.inf)
         r = rb * rb + rs * rs
         if r > worst:
             worst, critical, R_b, R_s = r, p, rb, rs
@@ -439,15 +541,30 @@ class Check:
 def screening_checks(analysis: BoltAnalysis, section: BoltSection) -> list[Check]:
     """Equilibrium and engineering-judgement screens, in display order.
 
-    These are advisory. The only one that invalidates the numbers is force
-    closure, which is also carried on `Margins.valid`.
+    These are advisory. The only one that invalidates the numbers is closure,
+    which is also carried on `Margins.valid`.
     """
     a = analysis
     out: list[Check] = []
 
-    if a.balanced:
-        out.append(Check(True, "Plate loads sum to zero."))
-    else:
+    # Closure, in the order that gives the most actionable diagnosis first.
+    # A starved layer is reported by name because "the diagrams do not close"
+    # would not tell anyone what to fix.
+    if a.starved:
+        which = ", ".join(str(i) for i in a.starved)
+        plural = "s" if len(a.starved) > 1 else ""
+        out.append(
+            Check(
+                False,
+                f"**Layer{plural} {which}** carr{'y' if plural else 'ies'} "
+                f"load but ha{'ve' if plural else 's'} no thickness. A layer "
+                f"with zero thickness applies no bearing, so its load never "
+                f"reaches the diagrams — every margin below is suppressed. "
+                f"Give it a thickness, or move the load to a layer that has "
+                f"one.",
+            )
+        )
+    elif abs(a.sum_P) > a.imbalance_tol:
         out.append(
             Check(
                 False,
@@ -457,13 +574,30 @@ def screening_checks(analysis: BoltAnalysis, section: BoltSection) -> list[Check
                 f"missing layer or a sign flip.",
             )
         )
+    elif not a.closes:
+        # ΣP = 0 yet the integrated diagrams do not return to zero. Kept as a
+        # distinct branch: it is the backstop for any future variant of the
+        # starved-layer defect, not just the one we know about.
+        out.append(
+            Check(
+                False,
+                f"Loads sum to zero but the diagrams do not close: "
+                f"**V(L) = {a.closure_V:,.1f} lbf**, "
+                f"**M(L) = {a.closure_M:,.1f} lb·in**. Some load is not "
+                f"reaching the bolt. Every margin below is suppressed.",
+            )
+        )
+    else:
+        out.append(Check(True, "Plate loads sum to zero, and the diagrams close."))
 
     if a.closes_moment:
         out.append(
             Check(
                 True,
-                f"Leftover moment **{a.moment_residual:,.1f} lb·in** reacted by "
-                f"**{abs(a.RL):,.1f} lbf** at head and nut.",
+                f"Leftover moment **{a.moment_residual:,.1f} lb·in** closed "
+                f"by a **{abs(a.RL):,.1f} lbf** end pair — a couple from "
+                f"clamp pressure under the head and nut, not sideways "
+                f"bearing. Method §3.",
             )
         )
     else:

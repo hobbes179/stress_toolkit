@@ -379,6 +379,20 @@ shear flow (old item 6, for open sections)._
    Suggested approach: `matplotlib.backends.backend_pdf` or `reportlab`.
    The PDF should be fully standalone — not reliant on the browser's print function.
 
+3. **⚠️ `use_container_width` is past its removal date — LIVE RISK**
+   (logged 2026-09-04) Streamlit warns that `use_container_width` "will be
+   removed after 2025-12-31". That date has passed. It is still used **12
+   times in 3 files** — `Home.py`, `apps/beam_section/app.py`,
+   `ui/components.py` — and `requirements.txt` pins `streamlit>=1.28.0` with
+   **no upper bound**, so Streamlit Cloud may install a release that has
+   dropped it. When that happens the landing page and the beam module break
+   in production, with no local warning first.
+
+   Fix: swap to `width="stretch"` / `width="content"` (mechanical — the
+   `tierod` and `bolt_bending` modules already use the new form and are
+   unaffected), and bound the dependency, e.g. `streamlit>=1.28,<2`, so a
+   major release cannot change the runtime under a deployed app.
+
 ### Medium-term
 
 6. **Shear stress accuracy (solids/tubes)** — _partly done_

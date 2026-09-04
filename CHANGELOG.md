@@ -33,6 +33,426 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.4.0 — Refined bearing, and a bolt-bending audit (2026-09-04)
+
+**New, opt-in, less-conservative.** A sidebar toggle on the Bolt Bending page
+replaces uniform bearing with a beam-on-elastic-foundation solve. The baseline
+is untouched and stays the default answer — the toggle is off by default.
+
+**One analysis drives the page.** The toggle chooses *which*; it does not add a
+parallel set of results. Two peak moments on one screen is how the wrong one
+ends up in a report. The baseline-vs-refined comparison lives in a grid inside
+the refined supplement, below the margins it qualifies. (This shipped briefly
+as a second tab and was changed to a toggle before release, at the owner's
+request — the page now has no tabs at all.)
+
+Because a toggle can silently move the peak moment by 15%, the bearing
+assumption in force is stated in words above the Strength card in **both**
+states, and the refined blocks — basis for `k`, per-plate β·t, and the limits —
+are rendered directly beneath the numbers they qualify. Turning it off restores
+the baseline exactly.
+
+### What it refines — and what it deliberately does not
+
+Uniform bearing is equivalent to assuming the bolt is **rigid across each
+plate's thickness**: it cannot tilt in the hole, so it presses evenly. That is
+conservative on a long grip, where a real bolt bends, bearing concentrates
+toward the shear planes, and the effective moment arm shortens.
+
+Each plate is given an unknown rigid offset `d_i` with a Winkler bed of modulus
+`k` between it and the bolt, so `q(x) = k·(d_i − w(x))` and
+
+```
+EI·w'''' + k·w = k·d_i     with   ∫ k(d_i − w) dx = P_i  over plate i
+```
+
+One extra equation per plate for one extra unknown — **a single linear solve,
+no iteration** — and the constraint means the entered load split is honoured
+exactly. It refines *where within each plate's thickness the load acts*, and
+nothing else.
+
+Explicitly NOT modelled: the **load split** (still an input; statically
+indeterminate), bolt–hole **clearance** and one-sided contact (the bed is
+linear and two-sided, so a negative reaction is bearing on the far side of the
+hole — right for a close fit, wrong for a sloppy one), and **plastic bearing**
+redistribution at ultimate. All three are stated on the page.
+
+### Why it can be trusted: the rigid-bolt limit
+
+Pinned at both ends and straight ⇒ `w ≡ 0` ⇒ `q = k·d_i`, uniform over each
+plate. **The refined model reduces to the baseline exactly as `k → 0`**, so it
+is a correction to the model already in service rather than a rival to it.
+That is the governing gate in `tests/bolt_bending/test_refined.py`, along with
+the standing check that refined diagrams still close at the nut and that each
+plate's strips sum to the entered load.
+
+### Basis for k — Tate & Rosenfeld, cross-checked against Huth
+
+`k = E_plate`, from the Tate & Rosenfeld (NACA TN 1051, 1946) bearing term:
+the plate bearing compliance `δ = P/(E·t)` against the Winkler `P = k·δ·t`.
+
+Only the **bearing** part belongs in `k`. Lumped fastener-flexibility formulas
+(Huth, Swift) bundle bolt bending, bolt shear and bearing into one empirical
+number, and this model already computes bolt bending explicitly from EI — so
+calibrating `k` to a lumped compliance would **double-count** the very thing
+being refined. Huth (ASTM STP 927, 1986) is therefore carried as an
+*independent cross-check* on the resulting joint compliance, never as an input.
+On the shipped default it reads 1.47× — inside the ±2× band these published
+formulas occupy among themselves. ⚠️ VERIFY: the Huth exponent and coefficient
+are the commonly quoted bolted-metallic constants and have not been checked
+against the paper.
+
+### Per-plate foundation modulus
+
+Each plate now takes **its own material**, and therefore its own bed `k = E_i`,
+from a selector on its row. `refined_analysis` accepts either a scalar (one bed
+for the stack, the previous behaviour, bit-identical) or a per-layer sequence.
+
+This is not cosmetic. A steel doubler and an aluminium skin differ by ~2.7× in
+bearing stiffness; β scales as `k^¼`, so the stiffer plate draws its bearing in
+harder and **the peaking follows it**. One averaged bed puts that peak on the
+wrong plate. On a 2024-T3 / 4340 / 2024-T3 stack the steel plate reads β·t =
+2.00 against 0.78 for the aluminium ones.
+
+Guards: a short or gappy material list falls back to the first stated modulus
+rather than leaving a plate on a zero-stiffness bed, which would make the solve
+singular. `RefinedResult.mixed_stack` adds the material and `k` columns to the
+per-plate table and stops the basis card advertising a single `k` that no plate
+actually has — on a mixed stack the headline is the **governing** plate's, never
+an average. The Huth cross-check uses each plate's own modulus.
+
+⚠️ Metallic only. `k = E_plate` is a Tate & Rosenfeld metallic bearing
+derivation and the Huth constants shipped here are the bolted-metallic set;
+composite laminates need a different bearing model, a different Huth constant
+set, and CMH-17 allowables. The plate material list is limited to metallics on
+purpose.
+
+### Results on the shipped verification case
+
+| plate material | β·t (0.5 in plate) | peak M | vs baseline | MS bending |
+|---|---|---|---|---|
+| — (baseline, uniform) | — | 278.7 | — | +1.64 |
+| 2024-T3 | 1.56 | 235.2 | −15.6% | +2.13 |
+| Ti-6Al-4V | 1.73 | 218.8 | −21.5% | +2.37 |
+| steel | 2.00 | 187.7 | −32.7% | +2.92 |
+
+`β = (k/4EI)^¼`; `1/β` is the decay length of the bolt's deflection inside a
+plate. **β·t is the screening number**: below ~1 bearing is already near-uniform
+and the baseline is the right model; above ~2 it peaks hard. The page says
+which case it is in plain language rather than leaving it to be inferred.
+
+### Numerics — a trap worth recording
+
+The system has **two rigid-body null modes** (translate or rotate the bolt while
+shifting every `d_i` to match, and the constraints still hold). An early draft
+left it singular and leaned on a least-squares minimum-norm solve: it looked
+entirely plausible and **drifted with mesh refinement**, giving 239.4 lb·in at
+coarse mesh against the correct 235.1.
+
+The fix is physical as well as numerical: **pin lateral deflection at the head
+and nut faces.** That removes exactly those two modes. Now mesh-independent
+from 100 to 1600 el/in; `test_converged_and_stable_in_mesh` would have caught
+the original.
+
+Those pins are a deflection boundary condition **on the shape solve only** —
+the same idealisation as the baseline's end pair, but their reactions are not
+carried forward and are **not** equal to `R_0`/`R_L`. (An earlier draft of this
+entry and of the module docstring claimed they were; they are not.) The refined
+distribution goes back through `kernel.analyse()` as strips, and the kernel
+recomputes `M_res` from that strip layout and closes it with its own end pair.
+On the shipped default the refined layout still leaves `M_res` = −78.9 lb·in,
+closed at 74.5 lbf.
+
+Also fixed here: the figure builder gained an optional `groups` argument, so a
+figure whose segments are subdivisions of the physical layers annotates by
+plate rather than drawing 24 station ticks per plate. The peak-moment callout
+and the governing-station note take the same treatment via a `names=` argument
+— without it the refined peak reports "in plate 36" instead of "in plate 2".
+
+### Fixed: a loaded layer with no thickness passed the closure gate
+
+**Results-changing. This produced confident, meaningless margins.**
+
+The §4.1 gate tested `ΣP ≈ 0` — the *input* sum. A layer carrying load with
+zero (or negative, hence clamped) thickness contributes to `ΣP` and to `M_res`,
+but `w = P/t` is guarded to zero, so it applies **no bearing** and its load
+never reaches the diagrams. `ΣP` can therefore be zero while the diagrams do
+not close:
+
+```
+[plate 0.25 +1000] [plate 0.000 −1000] [plate 0.25 0]
+  ΣP = 0            → balanced = True → margins displayed
+  V(L) = +1000 lbf, M(L) = +250 lb·in  → the diagrams never closed
+```
+
+Every screening check reported green. It is reachable in one keystroke: the
+thickness input allows 0, so clearing a thickness leaves `0.000` beside a load.
+
+The tell was that **the two bearing models disagreed**: the refined path zeroed
+a starved plate's load, so the same stack was gated one way with the toggle off
+and the other way with it on.
+
+Fixed by gating on the **integrated output** as well as the input sum —
+`|V(L)|` against the same lbf tolerance, and `|M(L)|` against `tol × L` (a
+moment scale from load × grip, deliberately not from `max|M|`, which is
+inflated when the diagram is wrong and would slacken its own tolerance).
+`M(L)` is only checked when the end pair is applied, since it is meant to be
+non-zero otherwise.
+
+`analyse()` now also reports `starved` — the 1-based layers carrying load with
+no thickness — so the screening check and the banner name the layer instead of
+saying "the diagrams do not close", which would not tell anyone what to fix.
+The banner was branched at the same time: it previously recited the ΣP message
+unconditionally and read "Plate loads sum to 0.0 lbf, not zero" on this stack.
+`_solve` now passes a starved plate's load through so both models see the same
+loads and fail together.
+
+### Replaced the refined solve's trustworthiness check
+
+`np.linalg.cond` was measuring the wrong thing. Swept:
+
+| varied | condition number |
+|---|---|
+| `E_plate` 0.001 → 1000 Msi (10⁶×) | 1.081e13 — **does not move at all** |
+| mesh 100 → 1600 el/in | 2.3e12 → 5.5e15 |
+| bolt dia 0.1 → 1.0 in | 5.5e10 → 5.5e14 |
+
+It tracked the beam stiffness matrix's intrinsic conditioning (`EI/Le³` against
+the unit-diagonal pinned rows), not solution quality — so it called an ordinary
+**1 in bolt at the default mesh** untrustworthy, and flipped to untrustworthy
+whenever the mesh was **refined**, while the answers agreed to six figures. It
+also advised "reduce the mesh", a control the UI does not expose.
+
+Replaced with two direct measures, both thresholded from measured behaviour:
+
+- `residual` — relative residual of the linear solve. Observed 1.6e-10 to
+  3.8e-6 (growing with mesh through float64 accumulation); a failed solve is
+  O(1). `RESIDUAL_WARN = 1e-4`.
+- `load_error` — how far the strip discretisation lands from each plate's
+  entered load **before** the strips are normalised onto it. This is the
+  meaningful one: the normalisation forces the right total onto whatever shape
+  came out, so a check after it would always pass. Measured to scale as
+  1/strips², i.e. midpoint-quadrature error, and to grow with β·t as the
+  distribution gets peakier. Observed 3e-8 to 4e-3; 3e-4 on the default.
+  `LOAD_ERROR_WARN = 1e-2`.
+
+Dropping the `cond` call also removed an SVD on the largest matrix in the
+solve: `tests/bolt_bending/` went from ~8s to ~3.4s.
+
+### Shear basis now follows what Fsu actually is
+
+**Results-changing for non-fastener bolt materials.**
+
+`f_s = V/A` is the **average** shear. That is the correct basis against an
+MMPDS-01 Table 8.1.4 fastener allowable, which is tabulated as ultimate load
+over the shank area. It is **not** correct against a *material* shear strength:
+on a solid round the parabolic distribution peaks at 4/3 of the average.
+
+The bolt material dropdown offers structural stock (4340 HT180, etc.) alongside
+fastener grades, so the wrong basis was reachable and worth 33%. On a
+short-grip case where shear governs, MS_shear +2.70 → +1.78.
+
+`Allowables.shear_peak_factor` (default 1.0 — the fastener case, which is what
+this tool is for) scales the average, and is applied to the interaction scan as
+well as the standalone check so the two cannot disagree about a station. The
+app sets it from the selected material's `category`, warns in the sidebar,
+renames the results cell from "Average shear" to "Peak shear", and states the
+factor and its reason on the Strength card. Method §8 was rewritten — it
+previously told the reader to apply the factor themselves.
+
+### Corrected: what physically reacts the residual moment
+
+**Text only — no number changes.** The model, the kernel and every result are
+unchanged; this corrects a description that was wrong.
+
+The tool closes `M_res` with an equal and opposite pair at `x = 0` and `x = L`,
+and the kernel docstring, Method §3, the screening-check line and the imbalance
+banner all described this as the **head and nut bearing** the load. They cannot.
+A bolt head's underside bears **axially** on the plate face; there is no surface
+for it to push against laterally.
+
+What actually reacts the residual moment in a preloaded joint is the
+**redistribution of clamp pressure across the head and nut undersides**: as the
+bolt tries to tilt, the annular contact pressure shifts toward one edge. That
+shift is a moment, and it requires **no change in bolt tension** while the
+annulus stays in contact — for a 3/8 hex head, roughly `0.10·P_clamp` lb·in of
+capacity before the light-side edge lifts. Past that the contact collapses to
+one side and the bolt does pick up axial tension. That is prying, and it is not
+modelled.
+
+The `R_0`/`R_L` pair is therefore a **statically equivalent bookkeeping device**
+for delivering a couple of magnitude `M_res`, not a claim about a contact. That
+distinction has consequences: a force pair and an end moment are equivalent
+globally but not locally — the pair injects shear at the ends (`V(0) = R_0 ≠ 0`)
+where an end moment would not. On the §6 verification case:
+
+| closure of the same `M_res` | `V(0)` | `M(0)` | peak &#124;M&#124; |
+|---|---|---|---|
+| none (raw) | 0 | 0 | 310.0 — does not close |
+| **force pair at head and nut** (this model) | −56.6 | 0 | **278.7** |
+| end moment at the head alone | 0 | −60.0 | 250.0 |
+| end moments split head and nut | 0 | −30.0 | 280.0 |
+
+About a **12% spread** on the governing number, with this model near the top of
+it. Deliberately **not** exposed as a setting: the analyst's lever is the loads,
+not the closure idealisation, and the conservative choice is already in force.
+Recorded here so the assumption is visible rather than implied.
+
+It changes nothing about bearing. The `P_i` are inputs, so `P_i/(d·t_i)` is
+untouched by the closure choice; the refined pass preserves the entered split
+to 1e-13 lbf.
+
+### Corrected: the figure labelled a force pair in moment units
+
+`R₀` and `Rₗ` are **forces** (lbf). Their **moment** — `R·L` — is what closes
+the residual. The caption added with the dashed arrows said the pair "are one
+statically equivalent couple of 60 lb·in", which conflates a pair of forces
+with its moment and left the same object carrying two different units next to
+a straight arrow.
+
+Rewritten to state both quantities and the relation between them: equal and
+opposite forces of N lbf, L apart, adding no net force, whose moment R·L is
+what closes the diagram. `R·L` is given **symbolically**, because the displayed
+reaction is now rounded to whole lbf and spelling the product out numerically
+would not visibly come to the stated moment.
+
+Reaction and couple annotations are rounded to whole units (`whole()`, falling
+back to `sig()` below 1.0 so a small residual cannot print as a bare "0").
+Decimals on a ~57 lbf idealisation imply precision it does not have — the
+choice of closure form is itself worth ~12% on the peak moment.
+
+The caption block also **overran the viewBox and was silently clipped** at the
+right edge once it grew. It is now broken into hand-measured lines under ~125
+characters (the drawable width is ~750 user units, about 135 characters at
+font-size 11) and the height allows for three. There is no wrapping in SVG
+text: an over-long line just disappears past the edge.
+
+### Method section audited against the implementation
+
+Every claim in the Method section was checked against the code it documents.
+Five had gone stale — the section had been describing a tool that no longer
+existed. All are corrected; the equations that were right are unchanged.
+
+| § | claim | status |
+|---|---|---|
+| lead | "does no iteration and **calls no solver**" | **false with the refinement on** — it assembles and solves a linear system |
+| 1–2 | bearing is uniform over each plate's thickness | true of the baseline only; silent about the refined option |
+| 4 | closure gate is `\|ΣP\| > 0.005·max\|Pᵢ\|` | superseded — the gate also tests `V(L)` and `M(L)` |
+| 9 | `R_s = V·FF/(A·Fsu)` | missing the shear basis factor κ |
+| 11 | "**No bearing peaking**" | flatly denied a feature the tool ships |
+
+Sections 3, 5, 6, 7, 8 and 10 were verified correct and left alone: the
+integration recursion, the `u* = −V₀/w` peak location, `Z = πd³/32`,
+`A = πd²/4`, the `Fb = k·Ftu` modulus of rupture, and the worked example's
+station table all match the kernel as built.
+
+`method_html()` now takes the active bearing model, because the lead paragraph
+cannot be true in both states. With the refinement on it says which sections
+are still calculator-reproducible (§3 onward) and which are not (§1–2), and
+that the uniform baseline is still computed as the comparison. §4 now documents
+the three-part closure gate and *why* the moment tolerance is scaled by the
+grip. §11 describes bearing peaking as available-but-off rather than absent,
+and keeps the distinction from the ESDU 91008 and Melcon & Hoblit treatments,
+which the elastic model still does not implement.
+
+A Method section that describes a superseded gate is worse than no Method
+section: it tells the reader the tool checks something it does not. Four tests
+now pin these against regression.
+
+### The stack editor moved to the sidebar
+
+Rebuilt from `st.data_editor` to native `st.number_input` widgets, one block per
+layer, and moved into the sidebar. The editor is a set-up input — typed once,
+then left alone while the diagrams are read — so the main column now gives the
+figure the full page width.
+
+The widget change is the point, not the move: a data-editor NumberColumn has
+**no stepper buttons and no scroll-wheel nudge**; a native number input has
+both. Two number inputs to a row is the limit — Streamlit drops the steppers
+when a column gets narrow, and three-to-a-row was under that threshold while
+still passing every test. The sidebar is widened to 30rem for the same reason.
+
+**A gap now has no load field at all** — not disabled, not zeroed, not a
+placeholder holding an empty column. A spacer carries no bearing, so a load box
+beside it invites a number the model silently discards.
+
+Row widget keys are built from a stable row id rather than the list position,
+so deleting a row cannot replay the row below it into the gap. Stack state is
+shape-checked rather than presence-checked, so a browser still holding the
+previous DataFrame format is reseeded instead of crashing on the first rerun
+after a deploy.
+
+### Bearing model moved to the top of the sidebar
+
+It is the first decision: it changes the peak moment by ~15% and it changes
+what the stack editor below asks for, since the per-plate material selector
+only appears when it is on. It now sits above the thing it reconfigures.
+
+Rendering the toggle before the stack also removed a wart — the editor used to
+read the flag out of session state ahead of the widget, because the widget sat
+further down the sidebar. It now takes the toggle's return value directly.
+
+### Joint elevation: whole layers, with the unloaded side doing the talking
+
+Each layer was drawn only on the side it bears from, so the stack read as a set
+of half-plates rather than a joint. Every layer is now drawn to its **full
+width**, both sides of the bolt, with the two sides separated by weight instead
+of by presence:
+
+- **Bearing side** — solid, and it keeps the bearing block and its arrows.
+- **Unloaded side** — pale (38% fill), and it now carries the **load-direction
+  arrow** and the **labels**, which previously competed with the bearing
+  graphics for the same space.
+
+The direction arrow shows the external load on that layer. It acts in the same
+sense as the layer's bearing arrows, so it always points outward from the bolt
+on the pale side — which makes the sign convention readable straight off the
+picture rather than from the caption.
+
+The label now carries the **entered load** rather than the intensity `P/t`. The
+intensity is already shown graphically by the block's width, whereas the total
+is what was typed, so the figure doubles as a check on data entry — the reason
+the stack editor moved to the sidebar in the first place.
+
+Spacers are drawn full width too, so they read as the same kind of object as a
+plate, but with **wider, lighter hatching**: at the old density a full-width
+hatch was the heaviest thing in the stack, which reads as importance when a
+spacer is the one layer that carries nothing. Its label sits inside the band on
+a backing rect — just outside would land on the shear panel.
+
+No geometry change: the one-sided plates already reached the full `PL` on
+whichever side they occupied, so drawing both sides fits the existing envelope.
+
+### The figure no longer draws the end pair as sideways bearing
+
+Text-only in effect, but it closes the gap left by the wording correction
+below: every prose description of `R_0`/`R_L` was fixed, and **the drawing was
+left asserting the thing the prose now denies** — two solid arrows shoving
+horizontally on the head and nut.
+
+The arrows still point laterally, because that is genuinely what the model
+applies (it is why `V(0) = R_0 ≠ 0` in the shear panel). What changed is that
+they no longer read as contact forces:
+
+- the shafts are **dashed**, marking them as a statically equivalent
+  idealisation rather than a bearing reaction;
+- they are labelled `R₀` and `Rₗ` rather than a bare force value;
+- a second caption line under the figure states that the pair is **one couple**
+  of `M_res` lb·in, not sideways bearing on the head, and points at Method §3.
+
+The caption is suppressed on a stack that closes on its own, where annotating a
+zero couple would be noise. Figure height went 552 → 572 px for the extra line.
+
+### Verification
+
+`tests/bolt_bending/` — 119 tests, green (53 → 119). Full suite green (1052).
+
+Every results-changing item above is pinned by a test named for the defect
+it prevents, so the reason each gate exists survives in the suite rather
+than only here.
+
+---
+
 ## v2.3.0 — Bolt Bending module (2026-09-03)
 
 **New module, no change to existing results.** `apps/bolt_bending/` +

@@ -26,21 +26,28 @@ _COL_LEFT = """
 head bearing face (<i>x</i>&nbsp;=&nbsp;0) to the nut face
 (<i>x</i>&nbsp;=&nbsp;<i>L</i>), where <i>L</i> is the total grip. The only
 transverse loads are the bearing pressures the plates apply to the shank, plus
-whatever the head and nut react. Bending is taken in a single plane, so the
-problem is one-dimensional.</p>
+the end pair that closes the residual moment (&sect;3). Bending is taken in a
+single plane, so the problem is one-dimensional.</p>
 <p>Each plate is assumed to bear <b>uniformly over its own thickness</b>. This
-is the conservative baseline: real bearing peaks toward the shear planes,
-which shortens the effective moment arm.</p>
+is the conservative baseline: real bearing peaks toward the shear planes, which
+shortens the effective moment arm. Switching on <i>Refine bearing
+distribution</i> replaces this one assumption &mdash; and only this one
+&mdash; with a solved distribution (&sect;11); everything from &sect;3 onward
+runs unchanged on whatever &sect;2 produces.</p>
 
 <h3>2 &nbsp;Bearing intensity</h3>
 <p>A plate of thickness <i>t<sub>i</sub></i> carrying transverse load
 <i>P<sub>i</sub></i> applies a line load</p>
 <div class="bb-eq"><i>w<sub>i</sub></i> = <i>P<sub>i</sub></i> /
 <i>t<sub>i</sub></i> &nbsp;&nbsp;[lbf/in]</div>
-<p>over the span it occupies. Gaps and spacers get <i>w</i>&nbsp;=&nbsp;0. They
-support nothing and simply carry shear across, which is why a spacer adds
-moment arm at no benefit. The shaded blocks in the joint elevation are these
-intensities, scaled to a common maximum.</p>
+<p>over the span it occupies, constant within the plate. Gaps and spacers get
+<i>w</i>&nbsp;=&nbsp;0. They support nothing and simply carry shear across,
+which is why a spacer adds moment arm at no benefit. The shaded blocks in the
+joint elevation are these intensities, scaled to a common maximum.</p>
+<p>Under the refined distribution a plate is subdivided into thin strips, each
+with its own <i>w</i>, and the blocks then show that solved variation instead
+of one constant value per plate. The strips still sum to the entered
+<i>P<sub>i</sub></i> exactly, so &sect;3 onward is unaffected.</p>
 
 <h3>3 &nbsp;Equilibrium</h3>
 <p>Force balance requires the plate loads to sum to zero:</p>
@@ -53,27 +60,68 @@ moments about the head face,</p>
 <i>x</i><sub>0,<i>i</i></sub> + <i>t<sub>i</sub></i>/2</div>
 <p>A symmetric double-shear stack gives <i>M</i><sub>res</sub>&nbsp;=&nbsp;0 on
 its own. Any asymmetry &mdash; an offset spacer, unequal thicknesses &mdash;
-leaves a residue that a real bolt reacts through head and nut bearing. The tool
-closes it with an equal and opposite pair:</p>
+leaves a residue that must be reacted at the ends of the grip. The tool closes
+it with an equal and opposite pair applied at <i>x</i>&nbsp;=&nbsp;0 and
+<i>x</i>&nbsp;=&nbsp;<i>L</i>:</p>
 <div class="bb-eq"><i>R<sub>L</sub></i> = &minus;<i>M</i><sub>res</sub> /
 <i>L</i>,&nbsp;&nbsp; <i>R</i><sub>0</sub> = &minus;<i>R<sub>L</sub></i></div>
-<p>applied at <i>x</i>&nbsp;=&nbsp;0 and <i>x</i>&nbsp;=&nbsp;<i>L</i>. This
-adds no net force, and both diagrams then close at the nut. Unchecking the
+<p>Their resultant is a <b>pure couple of magnitude
+<i>M</i><sub>res</sub></b>. That resultant is the only thing being asserted;
+the split into two lateral forces is a bookkeeping device for delivering it.
+It adds no net force, and both diagrams then close at the nut. Unchecking the
 option drops the pair so you can see the raw imbalance.</p>
 
-<h3>4 &nbsp;Force closure is checked, and failing it voids the margins</h3>
+<p class="bb-note" style="font-size:13px;"><b>&#9888; ASSUMPTION &mdash; how
+that couple is physically supplied.</b> It is <i>not</i> the head and nut
+bearing sideways: nothing at the underside of a head can react a lateral
+force, because there is no surface for it to push against. What reacts the
+residual moment in a preloaded joint is the <b>redistribution of clamp
+pressure across the head and nut undersides</b>. As the bolt tries to tilt,
+the annular contact pressure shifts toward one edge &mdash; and that shift is
+a moment, requiring no change in bolt tension while the annulus stays in
+contact. For a 3/8 hex head the annulus carries roughly
+0.10&thinsp;&middot;&thinsp;<i>P</i><sub>clamp</sub> lb&middot;in before the
+light-side edge lifts; past that the contact collapses to one side and the
+bolt does pick up axial tension. That is prying, and it is not modelled here.
+</p>
+
+<p class="bb-note" style="font-size:13px;">A force pair and an end moment are
+equivalent globally but <b>not locally</b> &mdash; the pair injects shear at
+the ends (<i>V</i>(0)&nbsp;=&nbsp;<i>R</i><sub>0</sub>&nbsp;&ne;&nbsp;0) where
+an end moment would not. On the verification case the three defensible
+closures of the same <i>M</i><sub>res</sub> give peak
+|<i>M</i>|&nbsp;=&nbsp;<b>278.7</b> (force pair, used here), <b>250.0</b> (end
+moment at the head alone) and <b>280.0</b> lb&middot;in (end moments split
+head and nut) &mdash; about a 12% spread, with this model near the top of it.
+It is deliberately not offered as a setting: the analyst's lever is the loads,
+not the closure idealisation.</p>
+
+<h3>4 &nbsp;Closure is checked, and failing it voids the margins</h3>
 <p><i>R</i><sub>0</sub>&nbsp;=&nbsp;&minus;<i>R<sub>L</sub></i> adds no net
 force, so that construction restores equilibrium <b>only if
 &Sigma;<i>P</i> is already zero</b>. When &Sigma;<i>P</i>&nbsp;&ne;&nbsp;0 the
 shear diagram does not return to zero at the nut,
 <i>M</i>(<i>L</i>)&nbsp;&ne;&nbsp;0, and every margin is meaningless.</p>
-<div class="bb-eq">|&Sigma;<i>P</i>| &gt; 0.005 &middot; max|<i>P<sub>i</sub></i>|
-&nbsp;&rarr;&nbsp; unbalanced</div>
-<p>A load sum outside that band suppresses every stress and margin on the page
-rather than printing a number an analyst could paste into a report. Physically
-a non-zero &Sigma;<i>P</i> means something outside the model is reacting the
-difference: friction from clamp-up, transverse head and nut bearing, or &mdash;
-most often &mdash; an input error such as a missing layer or a sign flip.</p>
+<p><b>&Sigma;<i>P</i>&nbsp;=&nbsp;0 is necessary but not sufficient</b>, so the
+integrated diagrams are tested as well. A layer carrying load with <i>zero
+thickness</i> is given <i>w</i>&nbsp;=&nbsp;0 &mdash; its load counts in
+&Sigma;<i>P</i> and in <i>M</i><sub>res</sub> but applies no bearing, so the
+sum can balance while the diagrams never close. All three must hold:</p>
+<div class="bb-eq">|&Sigma;<i>P</i>| &le; &epsilon;,&nbsp;&nbsp;
+|<i>V</i>(<i>L</i>)| &le; &epsilon;,&nbsp;&nbsp;
+|<i>M</i>(<i>L</i>)| &le; &epsilon;<i>L</i>,&nbsp;&nbsp; with &nbsp;
+&epsilon; = 0.005 &middot; max|<i>P<sub>i</sub></i>|</div>
+<p>The moment tolerance is scaled by the grip rather than by
+max|<i>M</i>|&nbsp;&mdash; when the diagram is wrong, max|<i>M</i>| is inflated
+and would slacken its own tolerance. <i>M</i>(<i>L</i>) is tested only when the
+end pair is applied, since it is meant to be non-zero otherwise.</p>
+<p>Failing any of them suppresses every stress and margin on the page rather
+than printing a number an analyst could paste into a report. Physically a
+non-zero &Sigma;<i>P</i> means something outside the model is reacting the
+difference: friction at the faying surfaces from clamp-up, restraint outside
+the grip, or &mdash; most often &mdash; an input error such as a missing layer
+or a sign flip. It is <i>not</i> reacted at the head or nut, which bear
+axially on the plate faces and have nothing to push against laterally.</p>
 
 <h3>5 &nbsp;Integration</h3>
 <p>Within a segment of constant <i>w</i>, starting at <i>x</i><sub>0</sub> with
@@ -119,7 +167,7 @@ often lands well inboard of where the shank ends.</p>
 
 <h3>8 &nbsp;Stresses and margins</h3>
 <div class="bb-eq"><i>f<sub>b</sub></i> = <i>M</i><sub>max</sub> /
-<i>Z</i>,&nbsp;&nbsp; <i>f<sub>s</sub></i> = <i>V</i><sub>max</sub> / <i>A</i></div>
+<i>Z</i>,&nbsp;&nbsp; <i>f<sub>s</sub></i> = &kappa; <i>V</i><sub>max</sub> / <i>A</i></div>
 <p>Bending is checked against a modulus of rupture, not against
 <i>F<sub>tu</sub></i> directly. A solid round has a fully plastic shape factor
 of 1.7; <i>k</i>&nbsp;=&nbsp;1.5 is the usual defensible working value, and
@@ -129,9 +177,7 @@ MMPDS bending MOR curves are better still where they exist.</p>
 (<i>f<sub>b</sub></i> &middot; FF) &minus; 1</div>
 <div class="bb-eq">MS<sub>s</sub> = <i>F<sub>su</sub></i> /
 (<i>f<sub>s</sub></i> &middot; FF) &minus; 1</div>
-<p>FF is the fitting factor. Shear here is the average <i>V</i>/<i>A</i>; the
-true peak on a round section is 4/3 of that, so add the factor yourself if your
-process demands it.</p>
+<p>FF is the fitting factor. <b>The shear basis depends on what <i>F<sub>su</sub></i> is.</b> An MMPDS-01 Table 8.1.4 fastener allowable is tabulated as ultimate load over the shank area &mdash; already an average &mdash; so <i>V</i>/<i>A</i> is the matching basis and no factor applies. A <i>material</i> shear strength is not: on a solid round the parabolic distribution peaks at 4/3 of the average, and the check must be against that peak. The tool picks the factor from the selected material&rsquo;s category and states it on the Strength card whenever it is not 1.0.</p>
 
 <h3>9 &nbsp;Combined check</h3>
 <p>Peak moment and peak shear almost never coincide, so pairing the two maxima
@@ -139,7 +185,10 @@ is both wrong and needlessly harsh. The tool evaluates the interaction at
 <b>every station</b> and reports the worst:</p>
 <div class="bb-eq"><i>R<sub>b</sub></i> = <i>M</i>(<i>x</i>)&middot;FF /
 (<i>Z F<sub>b</sub></i>),&nbsp;&nbsp; <i>R<sub>s</sub></i> =
-<i>V</i>(<i>x</i>)&middot;FF / (<i>A F<sub>su</sub></i>)</div>
+&kappa; <i>V</i>(<i>x</i>)&middot;FF / (<i>A F<sub>su</sub></i>)</div>
+<p>&kappa; is the same shear basis factor as &sect;8 &mdash; it must appear in
+both, or the interaction and the standalone shear check would disagree about
+the same station.</p>
 <div class="bb-eq">MS<sub>c</sub> = 1 / &radic;( max[ <i>R<sub>b</sub></i><sup>2</sup>
 + <i>R<sub>s</sub></i><sup>2</sup> ] ) &minus; 1</div>
 
@@ -180,9 +229,17 @@ in <code>tests/bolt_bending/test_kernel.py</code>.</p>
 <h3>11 &nbsp;What is not included</h3>
 <p>No credit is taken for clamp-up, which genuinely stiffens the joint and
 reduces bolt bending but is hard to quantify by hand. No axial load, preload or
-prying. No bearing peaking: shortening the arm requires the Melcon &amp; Hoblit
-treatment in AFFDL-TR-69-42, and the ESDU 91008 reduced arm is valid only at
-ultimate with plastic bearing redistribution, not where yield governs.</p>
+prying &mdash; note that the &sect;3 couple is supplied by clamp pressure
+redistributing under the head, which is only available while the joint stays
+preloaded and the contact annulus stays closed.</p>
+<p><b>Bearing peaking is available, but off by default.</b> The uniform
+bearing of &sect;1 is the conservative baseline; the <i>refined bearing
+distribution</i> in the sidebar replaces it with a beam on an elastic
+foundation, which does let the bolt tilt in the hole and does shorten the
+effective arm. It is an elastic, close-fit model: it captures neither the
+plastic bearing redistribution behind the ESDU 91008 reduced arm nor the
+Melcon &amp; Hoblit treatment of AFFDL-TR-69-42, and it does not decide the
+load split. Its basis and its limits are printed with its results.</p>
 <p>The load split between shear planes is an <b>input, not a result</b>. It is
 statically indeterminate and should come from relative plate stiffness or a
 bounding sensitivity study. Plate bearing, shear-out, net section and lug
@@ -191,14 +248,37 @@ can hand back a comfortable margin on the wrong failure mode.</p>
 """
 
 
-def method_html() -> str:
-    """The full Method section, two columns, ready for `st.markdown`."""
+# The opening claim is only true of the baseline. The refined pass assembles
+# and solves a linear system, so promising "no solver" while it is running
+# would be a false statement about the numbers on the same page.
+_LEAD_BASELINE = (
+    "Everything below is reproducible with a calculator. The tool does no "
+    "iteration and calls no solver &mdash; it evaluates closed-form "
+    "expressions segment by segment."
+)
+_LEAD_REFINED = (
+    "&sect;3 onward is reproducible with a calculator, and is what the tool "
+    "evaluates segment by segment. <b>&sect;1&ndash;2 are not, while the "
+    "refined bearing distribution is on:</b> the bearing intensity is solved "
+    "from a beam on an elastic foundation (one linear system, no iteration) "
+    "rather than assumed uniform. The uniform baseline below is still "
+    "computed &mdash; it is the comparison shown above."
+)
+
+
+def method_html(refined: bool = False) -> str:
+    """The full Method section, two columns, ready for `st.markdown`.
+
+    Args:
+        refined: Whether the refined bearing distribution is the model in
+            force. Changes only the lead paragraph, which otherwise claims the
+            tool calls no solver — untrue while the refined pass is running.
+    """
+    lead = _LEAD_REFINED if refined else _LEAD_BASELINE
     return (
         '<div class="bb-method">'
         '<div class="bb-h2">Method</div>'
-        '<p class="bb-lead">Everything below is reproducible with a calculator. '
-        "The tool does no iteration and calls no solver &mdash; it evaluates "
-        "closed-form expressions segment by segment.</p>"
+        f'<p class="bb-lead">{lead}</p>'
         '<div class="bb-mgrid">'
         f"<div>{_COL_LEFT}</div>"
         f"<div>{_COL_RIGHT}</div>"

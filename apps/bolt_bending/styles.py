@@ -79,12 +79,19 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
 .bb-peak b {{ font-weight:600; }}
 
 /* ── results grid — the original's .res ──────────────────────────── */
+/* Separators live on the CELLS, not on a background showing through 1px gaps.
+   The grid auto-fits, so a 6-cell grid in a narrow column wraps to 4 + 2 and
+   the old background-bleed trick painted the two empty tracks solid grey. */
 .bb-res {{
   display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
-  gap:1px; background:{t.border}; border:1px solid {t.border};
+  gap:0; background:{t.bg3}; border:1px solid {t.border};
   border-radius:3px; overflow:hidden; margin:0;
 }}
-.bb-res > div {{ background:{t.bg3}; padding:11px 13px; }}
+.bb-res > div {{
+  background:{t.bg3}; padding:11px 13px;
+  border-left:1px solid {t.border}; border-top:1px solid {t.border};
+  margin:-1px 0 0 -1px;
+}}
 .bb-res dt {{ font-size:12px; color:{t.muted}; margin:0 0 3px; font-weight:400; }}
 .bb-res dd {{
   margin:0; font-size:19px; letter-spacing:-.01em; color:{t.text};
@@ -117,6 +124,66 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
   color:{t.text}; line-height:1.55;
 }}
 .bb-banner b {{ font-weight:600; }}
+
+/* ── sidebar ─────────────────────────────────────────────────────── */
+/* The stack editor lives here, four controls to a row. Streamlit's default
+   ~21rem drops the number inputs' stepper buttons at that width, and the
+   steppers plus the scroll-wheel nudge are the whole reason the editor is
+   built from native widgets instead of a data_editor. */
+section[data-testid="stSidebar"] {{ width:30rem !important; }}
+section[data-testid="stSidebar"] > div {{ width:30rem; }}
+
+/* Tighten the stack rows: default widget spacing turns four layers into a
+   full screen of scrolling. Do NOT push this further — the number inputs drop
+   their stepper buttons when their column falls below about 130 px, and the
+   steppers are the point of building the editor from native widgets. */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {{
+  gap:0.35rem; margin-bottom:-0.2rem;
+}}
+/* Sidebar captions carry the material provenance and the shear-basis
+   warning, so they must WRAP and stack, never overlap. An earlier negative
+   margin here (left over from a stack header row that no longer exists)
+   collided the two material captions on top of each other. */
+section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] p {{
+  font-size:11px; margin:2px 0 0; color:{t.muted}; line-height:1.45;
+}}
+/* Hairline between stack layers — without it two-line rows run together and
+   it stops being obvious which thickness belongs to which type. */
+.bb-layer-rule {{
+  border-top:1px solid {t.border}; margin:12px 0 8px;
+}}
+section[data-testid="stSidebar"] label p {{ font-size:11.5px; }}
+/* The row's remove button — square, quiet, and not a call to action. */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
+  button[kind="secondary"] {{
+  padding:0 0.4rem; min-height:38px; color:{t.muted};
+}}
+
+/* Gap rows have no load input at all; this holds the column and says why,
+   aligned on the inputs' baseline rather than floating above them. */
+.bb-nogap {{
+  height:38px; width:100%; display:flex; align-items:center; justify-content:center;
+  font-size:11.5px; color:{t.muted}; border:1px dashed {t.border};
+  border-radius:3px;
+}}
+
+/* ── active bearing-model strip ──────────────────────────────────── */
+/* Sits directly above the results so the assumption in force is never more
+   than a glance away. Two states, both always explained in words: the
+   toggle must never silently change the numbers. */
+.bb-model {{
+  background:{t.bg3}; border:1px solid {t.border}; border-left:3px solid
+  {t.muted}; border-radius:3px; padding:10px 14px; margin:0 0 12px;
+  font-size:13px; color:{t.text2}; line-height:1.55;
+}}
+.bb-model.bb-model-refined {{ border-left-color:{t.accent}; }}
+.bb-model b {{ font-weight:600; color:{t.text}; }}
+.bb-model .bb-tag {{
+  display:inline-block; font-size:10.5px; font-weight:600;
+  letter-spacing:.06em; text-transform:uppercase; color:{t.muted};
+  margin-right:8px;
+}}
+.bb-model.bb-model-refined .bb-tag {{ color:{t.accent}; }}
 
 /* ── method section ──────────────────────────────────────────────── */
 .bb-method {{ margin-top:8px; }}
