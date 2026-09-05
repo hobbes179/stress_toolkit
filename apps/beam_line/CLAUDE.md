@@ -279,6 +279,16 @@ Restart the server after editing an imported module; the watcher does not
 always pick up changes to `styles.py`, `method.py` or `plotting.py`, and a
 stale render will happily convince you a fix did not work.
 
+## Deploy note
+
+`plotting.py` reads `BEAM_PALETTE`, which this module ADDED to `ui/theme.py`.
+On Streamlit Cloud an automatic redeploy does not re-import modules already in
+`sys.modules`, so the first deploy after that commit failed with
+`ImportError: ... from ui.theme import BEAM_PALETTE` on this page alone while
+every other page was fine — new page, stale shared module. **Reboot the app**
+(Manage app → ⋮ → Reboot); no code change is involved. See the root
+`CLAUDE.md` deployment section.
+
 ## Style notes
 
 - Analyst-facing wording throughout. Standard structures terminology.

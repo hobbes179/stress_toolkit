@@ -653,6 +653,29 @@ Run from the repo root (`stress_toolkit/`).
 After any push to the deployment branch, Streamlit Cloud redeploys
 automatically within ~60 seconds.
 
+### ⚠️ Adding a symbol to a SHARED module needs a reboot, not just a push
+
+An automatic redeploy pulls the new source and hot-reloads the changed pages,
+but modules already in `sys.modules` are **not** re-imported. So when a commit
+adds a new name to a shared module — a token to `ui/theme.py`, a helper to
+`ui/components.py` — a newly-imported page that reads the new name finds the
+**stale** module object and dies at import:
+
+```
+File ".../apps/beam_line/plotting.py", line 39, in <module>
+    from ui.theme import BEAM_PALETTE as C
+ImportError
+```
+
+The source is correct and the push is complete; only the running process is
+stale. Symptom is distinctive: **exactly the new page fails, every existing
+page is fine**, and the traceback ends on an import of the shared module.
+
+**Fix: Manage app → ⋮ → Reboot app.** Do this as a matter of course after any
+commit that adds a name to `ui/`. (Observed 2026-09-04 on the v2.5.0 Beam
+Diagrams deploy. Same class as the local watcher staleness recorded in
+`apps/bolt_bending/CLAUDE.md`.)
+
 ---
 
 ## Session history summary
