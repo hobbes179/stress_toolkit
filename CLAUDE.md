@@ -49,7 +49,8 @@ stress_toolkit/
 │   ├── 1_Beam_Section_Stress.py
 │   ├── 2_Material_Library.py
 │   ├── 3_Tie_Rod_Layout.py
-│   └── 4_Bolt_Bending.py
+│   ├── 4_Bolt_Bending.py
+│   └── 5_Beam_Diagrams.py
 ├── apps/                            ← UI only. The ONLY place Streamlit is imported.
 │   ├── beam_section/
 │   │   ├── app.py                   ← Streamlit render() for the beam module
@@ -58,7 +59,9 @@ stress_toolkit/
 │   │   └── plotting_interactive.py  ← Plotly stress contour
 │   ├── material_library/app.py
 │   ├── tierod/                      ← render.py + ui_*.py; CLAUDE.md of its own
-│   └── bolt_bending/                ← app.py + plotting.py (SVG) + method.py
+│   ├── bolt_bending/                ← app.py + plotting.py (SVG) + method.py
+│   │   └── CLAUDE.md                ← module conventions + backlog
+│   └── beam_line/                   ← app.py + plotting.py (SVG) + method.py
 │       └── CLAUDE.md                ← module conventions + backlog
 ├── library/                         ← Pure engineering math. NEVER imports Streamlit.
 │   ├── materials/
@@ -69,11 +72,13 @@ stress_toolkit/
 │   │   └── README.md                ← How-to-add-a-shape docs
 │   ├── analysis/                    ← solvers, FEM, polygon props, crippling
 │   ├── tierod/                      ← tie-rod kernel
-│   └── bolt_bending/kernel.py       ← bolt statics + margins
+│   ├── bolt_bending/kernel.py       ← bolt statics + margins
+│   └── beam_line/                   ← line-beam model + stiffness solve + diagrams
 ├── ui/
 │   ├── theme.py                     ← Color tokens: THEME, PLOT_PALETTE, BOLT_PALETTE
 │   ├── styles.py                    ← CSS injection (call inject_css() at top of each page)
-│   └── components.py                ← Reusable widgets (section_header, info_card, etc.)
+│   ├── components.py                ← Reusable widgets (section_header, info_card, etc.)
+│   └── handoff.py                   ← Cross-page section snapshot (Beam Section → Beam Diagrams)
 ├── tests/                           ← pytest; tests/<module>/ per module
 ├── docs/                            ← Per-module source material and handoffs
 │   ├── tierod/
@@ -115,6 +120,7 @@ available from MMPDS and a conservative estimate is used:
 All colors come from `ui/theme.py`. Never hardcode hex colors in app pages.
 - `THEME` — UI color tokens (backgrounds, text, borders, status colors)
 - `PLOT_PALETTE` — matplotlib color tokens (always white plot background)
+- `BOLT_PALETTE` / `BEAM_PALETTE` — tokens for the two hand-built SVG figures
 
 All reusable Streamlit components are in `ui/components.py`. Use these
 instead of writing raw `st.markdown` HTML in app pages.
@@ -530,10 +536,10 @@ its own conventions gets an `apps/<module>/CLAUDE.md` (see `tierod`,
 
 Planned modules:
 
-_Shipped since this list was written: **Tie-Rod Layout** (`apps/tierod/`) and
-**Bolt Bending** (`apps/bolt_bending/`, v2.3.0). Bolt Bending's own backlog —
-variable section, load-split assistant, show-work mode, plate bearing and
-shear-out — lives in `apps/bolt_bending/CLAUDE.md`, not here._
+_Shipped since this list was written: **Tie-Rod Layout** (`apps/tierod/`),
+**Bolt Bending** (`apps/bolt_bending/`, v2.3.0) and **Beam Diagrams**
+(`apps/beam_line/`, v2.5.0 — item 14 below). Each module's own backlog lives
+in its `apps/<module>/CLAUDE.md`, not here._
 
 11. **Column Buckling** (`apps/column_buckling/`)
     Euler and Johnson column buckling, effective length factors, margin of
@@ -548,10 +554,22 @@ shear-out — lives in `apps/bolt_bending/CLAUDE.md`, not here._
     Tension, shear bearing, and shear tearout for metallic lugs per MMPDS
     §9.6 / Niu Airframe Stress Analysis.
 
-14. **Beam Deflection** (`apps/beam_deflection/`)
-    Euler-Bernoulli beam deflection and slope for standard load cases
-    (cantilever, simply supported, fixed-fixed). Could share section
-    properties from the beam section module.
+14. **Beam Deflection** — ✅ SHIPPED in v2.5.0 as **Beam Diagrams**
+    (`apps/beam_line/`, `library/beam_line/`, page 5). Kept here for history.
+    Built wider than planned: not standard load cases but a general
+    direct-stiffness line-beam solver, so statically indeterminate beams
+    (multiple interior supports, fixed-fixed, propped cantilever, elastic
+    supports, imposed settlement) and internal hinges are in scope rather than
+    deferred. Reports V, M, slope and deflection as exact piecewise
+    polynomials — the peak moment is found by rooting the shear, not by
+    sampling — plus reactions and a peak summary.
+
+    It does share section properties from the beam-section module, via
+    `ui/handoff.py`: a one-way snapshot into a plain session key, because
+    Streamlit drops widget state on page navigation. Backlog and conventions
+    live in `apps/beam_line/CLAUDE.md`. The obvious next step is the reverse
+    handoff — publish M_max and V_max back as loads on the Beam Section Stress
+    page, closing the loop.
 
 15. **Beam with Web Openings / Vierendeel** (`apps/web_opening/`) — WISH LIST,
     not scheduled. Analysis of beams with web penetrations (MEP / conveyance

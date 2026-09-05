@@ -67,6 +67,17 @@ MODULES = [
         "than pairing the two maxima.",
         "pages/4_Bolt_Bending.py",
     ),
+    (
+        "📉",
+        "Beam Diagrams",
+        "Shear, moment and deflection along a line beam. Any arrangement of "
+        "end conditions and interior supports — rigid, elastic or settling — "
+        "plus internal hinges and point, moment and trapezoidal loads. "
+        "Statically indeterminate beams are solved by direct stiffness; the "
+        "diagrams come back as exact polynomials, so the peak moment and its "
+        "station are found by rooting the shear rather than by sampling.",
+        "pages/5_Beam_Diagrams.py",
+    ),
 ]
 
 # Cards per row. Four modules in one row squeezes every description into a

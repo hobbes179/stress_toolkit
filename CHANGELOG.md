@@ -33,6 +33,193 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.5.0 — Beam Diagrams: a line-beam solver (2026-09-04)
+
+**New module.** `apps/beam_line/` + `library/beam_line/` + page 5. Shear,
+moment, slope and deflection along a straight prismatic beam with arbitrary
+supports, releases and loads. This is roadmap item 14 (`Beam Deflection`),
+widened from deflection-only into a full line-beam solver so that statically
+indeterminate beams are in scope rather than deferred.
+
+Nothing in an existing module changes results. `ui/theme.py` gains
+`BEAM_PALETTE`; `apps/beam_section/app.py` gains three lines that publish its
+section for reuse. No allowable, formula or margin anywhere else is touched.
+
+### Method
+
+**Direct stiffness, two DOF per node.** The alternative was superposition with
+a force method, which needs a redundant-selection step re-derived for every
+support arrangement. Stiffness handles determinate and indeterminate beams
+with one assembly, and — the deciding reason — reports an under-supported beam
+as a detectable null space instead of as a plausible wrong answer.
+
+**Diagrams are exact piecewise polynomials, not sampled arrays.** Under a
+trapezoidal load `w` is degree 1, so `V` is 2, `M` is 3, `θ` is 4 and `v` is
+5, and each is exactly representable between two feature stations. Carrying
+the coefficients buys three things a sample array cannot:
+
+- `M_max` is found by **rooting `V`**, so both the peak and its station are
+  exact. A sampled peak is wrong by up to half a sample interval and silently
+  depends on the sample count. The triangular-load case peaks at
+  `L/√3 = 57.735…`, which lands on no regular grid.
+- A discontinuity stays a discontinuity — `V` steps at a point load and `M`
+  steps at an applied couple. A sampled curve smears both into a steep ramp.
+- Deflection is obtained by integrating `M/EI` in closed form, so it carries
+  no quadrature error on top of the solve.
+
+**There is no mesh parameter, deliberately.** Euler-Bernoulli elements are
+exact at the nodes for these load types and the element interior is recovered
+in closed form, so refinement is a null operation — pinned at `rel=1e-12`
+against a mesh with extra nodes inserted. Anything that later makes the answer
+mesh-dependent has broken the recovery, not improved it.
+
+**Pin and roller are one restraint, not two.** With no axial DOF both restrain
+vertical translation and nothing else, so they produce identical reactions,
+diagrams and deflections. Offering two symbols that compute the same answer
+would imply a distinction the model does not carry. Stated in Method §2 and
+pinned by a test that must change first if an axial DOF is ever added.
+
+### Validity gate
+
+`ΣF = 0` is necessary but **not sufficient** — the lesson the bolt module paid
+for in v2.4.0, where a loaded zero-thickness layer passed the force sum with
+`V(L) = 1000 lb`. Results here are gated on three conditions, all relative,
+all at 1e-6: `|V(L)|`, `|M(L)|`, and the deflection residual. The third is a
+real cross-check rather than a restatement — the integration uses the solve
+only at `x = 0`, so if the reactions were wrong the integrated curve would
+miss the prescribed value at the far supports. A correct solve lands around
+1e-14.
+
+**Three scale-reference bugs were found and fixed during the build**, all the
+same mistake in different places: *judging a residue against the answer
+instead of against the problem*.
+
+1. The closure ratio was normalised by the diagram's **endpoint** values. A
+   simply supported beam has `M = 0` at both ends, so the scale collapsed onto
+   the closure residue itself and every such beam reported a ratio of exactly
+   1. Fixed to the true peak, taken over the interior.
+2. The deflection residual was normalised by the **nodal** deflections. On a
+   propped cantilever or a stiff spring every node sits at or near zero while
+   the span deflects normally, turning 1e-16 of rounding into an apparent
+   1e-5 error. Fixed to the peak of the field.
+3. Even the true peak can be zero: two self-cancelling couples give `V ≡ 0`,
+   so the shear residue was divided by itself and came out at 2. Fixed with
+   `Beam.load_scale()` — a shared definition of "how big is this problem",
+   where an applied couple contributes `M/L` to the force reference. The same
+   reference now suppresses rounding-floor values in the reactions table, the
+   peak summary and the figure, and cleans nothing in the Residual row or the
+   Solve-quality note, where showing the true residue is the entire point.
+
+**Singularity is detected spectrally**, and that is not the tool rejected from
+the bolt module. `np.linalg.cond` was removed from `refined.py` because it was
+being asked to *grade a solve*. The question here is binary and structural —
+is there a rigid-body mode — and a genuine mechanism sits at the 1e-16 floor
+while a real beam on deliberately soft springs sits many orders above, so the
+verdict does not turn on where in that gap the threshold sits.
+
+### Verification
+
+`tests/beam_line/test_kernel.py` asserts against **published formulae, not
+recorded outputs**, so a failure there is a real regression and never a stale
+golden. Sixteen closed-form cases, all reproducing to ~1e-15: simply supported
+and cantilever under uniform, point and triangular load; fixed-fixed; propped
+cantilever; two-span continuous; imposed settlement (asserted to induce moment
+on the indeterminate beam and *none* on the determinate one); a Gerber beam
+with an internal hinge; elastic supports, including the rigid limit as
+`k → ∞`. Plus a negative control proving the gate can fire, and its converse
+proving it does not fire on a correct solve.
+
+### Per-item include/exclude switch
+
+Every support, load and hinge row carries a switch, so the effect of a support
+or a load can be seen by flipping it rather than deleting and rebuilding it.
+It composes with the mechanism gate: switching off a support that the beam
+needed reports a mechanism and suppresses the diagrams, as it should.
+
+**An excluded item is never silently absent.** It is listed by value and
+station in a notice above the figure, and drawn ghosted — 30% opacity, dashed
+— on the elevation. This page gets screenshotted into stress reports, and a
+load that is simply not in the picture is one nobody notices is missing. The
+two halves of that are separately tested.
+
+**The notice sits below the figure, not above it.** It shipped above, and
+because it appears and disappears with the switches it made the whole plot
+stack jump down and back on every toggle -- destroying the one interaction the
+feature exists for. Nothing rendered above the figure may change height on a
+load toggle; the test asserts the page is byte-identical up to the `<svg>` tag
+in both states.
+
+The row's inputs stay editable while it is off, so a load can be dialled in
+before being switched back on; switching off is not a soft delete. The
+distributed-load scale is shared between the active and ghosted layers, or a
+ghosted 100 lb/in patch would be drawn the same height as an active 1 lb/in
+one. `library/beam_line` never sees any of this — "disabled" is a UI concept,
+and the `Beam` handed to the solver is always the real model.
+
+### Locked diagram scale, and why the envelope is not 2^n
+
+With the per-item switch came the obvious problem: each panel was scaled to
+its own current peak, so switching a load off rescaled the axis under it and
+the curve looked much the same. The impact was invisible.
+
+The fix is to scale every panel to the **envelope over all ON/OFF combinations
+of the loads** (sidebar toggle, on by default). The natural reading is that
+this needs a solve per combination -- 2^n, which is ~14 minutes at twenty
+loads. It does not. The model is linear in the loads, so at any station the
+largest value any subset can reach is obtained by including exactly the loads
+whose contribution is positive there:
+
+    upper(x) = V_0(x) + SUM_i max[V_i(x) - V_0(x), 0]
+    lower(x) = V_0(x) + SUM_i min[V_i(x) - V_0(x), 0]
+
+That is **n + 1 solves, and the result is exact rather than a bound** --
+checked against brute force over all 2^n subsets on four model types
+(indeterminate, settled, hinged, spring-supported), agreeing to ~5e-15. At a
+measured 0.3-1.1 ms a solve, twenty loads is ~14 ms instead of ~14 minutes.
+It is also cached on the full model, so flipping a switch is a cache hit and
+costs nothing at all.
+
+`V_0` -- the response to NO loads -- is not necessarily zero, and subtracting
+it from each single-load solve is load-bearing: an imposed settlement is a
+boundary condition present in every subset including the empty one, and
+without the subtraction it is counted n times.
+
+The envelope varies **loads only**. Switching a support off changes the
+structure rather than the load and the response is not linear in that, so a
+different support arrangement gets its own envelope -- a support toggle is
+allowed to move the scale, a load toggle is not. The locked scale is floored
+by the actual drawn peak, so a curve can never run outside its own panel
+because the envelope's sample grid missed a peak by a hair.
+
+A dashed rule marks the envelope in any panel whose current subset does not
+reach it; that gap is the contribution of whatever is switched off.
+
+### Section handoff
+
+`ui/handoff.py` mirrors the section from Beam Section Stress into a plain
+session key so Beam Diagrams can offer it as a starting point for `EI`.
+
+The mirror is necessary, not stylistic: Streamlit garbage-collects a widget's
+`session_state` entry once the widget stops being instantiated, so navigating
+between pages drops the producing page's widget state and reading its keys
+from another page gets nothing, reliably.
+
+It is a **snapshot, not a live link**, and the page says so in those words.
+Manual `E` and `I` remain the default, and the toggle is offered only when a
+snapshot exists — a toggle that is inert most of the time is worse than no
+toggle. The publish call is wrapped in a bare `except` on purpose: a handoff
+convenience must never be able to break the page that produces it.
+
+### Not modelled, stated on the page
+
+Shear deformation (Euler-Bernoulli, so deflections are under-predicted for
+`L/d < 10`), axial force and P–Δ, buckling of any kind, torsion, out-of-plane
+loading, self-weight (enter it as a distributed load), plasticity, large
+deflection. The module reports `V`, `M` and `v`; converting the peak moment
+into a stress and a margin remains the Beam Section Stress module's job.
+
+---
+
 ## v2.4.0 — Refined bearing, and a bolt-bending audit (2026-09-04)
 
 **New, opt-in, less-conservative.** A sidebar toggle on the Bolt Bending page

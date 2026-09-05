@@ -20,6 +20,7 @@ from ui.components import (
     stress_card_strip, governing_banner, table_export_controls,
 )
 from ui.theme import THEME, ms_status
+from ui.handoff import publish_section
 
 from library.materials import MATERIALS, names_grouped
 from library.shapes import SHAPE_NAMES, make_section, SHAPE_REGISTRY
@@ -490,6 +491,16 @@ def render() -> None:
                        "box above matches your part before trusting results.")
             for _n in _res.notes:
                 st.caption(_n)
+
+        # Mirror the section into a plain session key so other modules (Beam
+        # Diagrams) can offer it as a starting point. Widget state does not
+        # survive page navigation; see ui/handoff.py for why.
+        try:
+            publish_section(shape_name, mat_name, material.E,
+                            section.Iy(), section.Iz(), section.area())
+        except Exception:
+            # A handoff convenience must never be able to break this page.
+            pass
 
         def _box(body_html: str, accent: str, bg: str) -> None:
             st.markdown(

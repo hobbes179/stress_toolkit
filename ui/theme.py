@@ -149,3 +149,33 @@ BOLT_PALETTE = dict(
     hatch_line   = "#c9d4d8",        # spacer hatch strokes
     background   = "#ffffff",        # figure ground (always white, like PLOT_PALETTE)
 )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Line-beam palette — used by the hand-built SVG in
+# apps/beam_line/plotting.py. Same rule as PLOT_PALETTE and BOLT_PALETTE:
+# no page or plotting module hardcodes a hex value.
+#
+# Shear / moment / deflection are three separate stacked panels, each with
+# its own hue, so a value read off one panel cannot be mistaken for another
+# when the figure is cropped into a report. Shear and moment keep the same
+# blue / oxblood pair as the bolt module — the same quantities, so the same
+# colours — and deflection takes a teal that is distinct from both and from
+# the pass-green used for margin chips.
+# ──────────────────────────────────────────────────────────────────────────
+BEAM_PALETTE = dict(
+    shear        = THEME.accent,     # V(x) curve and fill
+    moment       = "#8c2f39",        # M(x) curve and fill
+    deflect      = "#0f766e",        # delta(x) curve and fill
+    load         = "#b45309",        # applied load arrows and distributed fill
+    reaction     = "#1f7a4a",        # reaction arrows and values
+    beam_fill    = "#e4ebee",        # the beam body in elevation
+    beam_edge    = "#5b6472",        # beam outline
+    support      = "#2c323b",        # support symbols
+    hinge        = "#ffffff",        # hinge circle interior
+    ink          = THEME.text,       # outlines, axis rules
+    muted        = THEME.muted,      # tick labels, annotations
+    rule         = THEME.border,     # panel dividers, zero axes
+    rule_soft    = THEME.rule_soft,  # station gridlines
+    background   = "#ffffff",        # figure ground (always white)
+)
