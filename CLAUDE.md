@@ -385,19 +385,28 @@ shear flow (old item 6, for open sections)._
    Suggested approach: `matplotlib.backends.backend_pdf` or `reportlab`.
    The PDF should be fully standalone — not reliant on the browser's print function.
 
-3. **⚠️ `use_container_width` is past its removal date — LIVE RISK**
-   (logged 2026-09-04) Streamlit warns that `use_container_width` "will be
-   removed after 2025-12-31". That date has passed. It is still used **12
-   times in 3 files** — `Home.py`, `apps/beam_section/app.py`,
-   `ui/components.py` — and `requirements.txt` pins `streamlit>=1.28.0` with
-   **no upper bound**, so Streamlit Cloud may install a release that has
-   dropped it. When that happens the landing page and the beam module break
-   in production, with no local warning first.
+3. **`use_container_width` migration** — ✅ DONE in v2.5.1
+   (logged 2026-09-04, fixed 2026-09-05) Streamlit's runtime warning still
+   reads "will be removed after 2025-12-31" — a date now well past — and the
+   removal is underway upstream (`use_column_width` is already gone from
+   `st.image` as of 1.61). All 11 call sites in `Home.py`,
+   `apps/beam_section/app.py` and `ui/components.py` now pass
+   `width="stretch"` explicitly, matching the form `tierod`, `bolt_bending`
+   and `beam_line` already used. `requirements.txt` is bounded
+   `streamlit>=1.49,<2` — 1.49 is where `width=` landed on `st.dataframe`
+   and `st.pyplot`, and the cap stops a major release changing the runtime
+   under a deployed app.
 
-   Fix: swap to `width="stretch"` / `width="content"` (mechanical — the
-   `tierod` and `bolt_bending` modules already use the new form and are
-   unaffected), and bound the dependency, e.g. `streamlit>=1.28,<2`, so a
-   major release cannot change the runtime under a deployed app.
+   **Explicit, not deleted.** `st.dataframe` / `st.pyplot` / `st.plotly_chart`
+   already default to `width="stretch"`, so those arguments *could* have been
+   dropped — but `st.page_link` and `st.download_button` default to
+   `"content"`. Dropping the argument there would have silently shrunk the
+   landing-page CTA (which `ui/styles.py` styles as a full-width filled button
+   completing the module card) and the CSV button, with no error to catch it.
+   Every site is therefore explicit. `tests/test_layout_api.py` guards the
+   whole class: no `use_container_width` anywhere, the `width=` API present on
+   every element the app uses, the assumed defaults unmoved, the dependency
+   bounded, and a headless render of both migrated pages.
 
 ### Medium-term
 

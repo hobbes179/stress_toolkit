@@ -1,6 +1,11 @@
 # Stress Toolkit — runtime dependencies
 # Pinned to versions verified locally; re-verify on Streamlit Cloud after any bump.
-streamlit>=1.28.0
+# Floor is 1.49: that is where `width="stretch"` / `width="content"` landed on
+# st.dataframe and st.pyplot (1.46 covered most other elements). The app uses
+# the `width=` form exclusively -- `use_container_width` is deprecated and is
+# already being removed element-by-element upstream. Capped below 2 so a major
+# release cannot change the runtime under a deployed app without a review.
+streamlit>=1.49,<2
 numpy>=1.24.0
 pandas>=1.5.0
 matplotlib>=3.6.0

@@ -135,12 +135,12 @@ for row_start in range(0, len(MODULES), CARDS_PER_ROW):
                 unsafe_allow_html=True,
             )
             # Navigation button — sits flush against the card above.
-            # use_container_width spans the full column width.
+            # width="stretch" spans the full column width.
             try:
                 st.page_link(
                     page_path,
                     label=f"Open {title}  →",
-                    use_container_width=True,
+                    width="stretch",
                 )
             except Exception:
                 st.caption(f"Select **{title}** from the sidebar to open this module.")

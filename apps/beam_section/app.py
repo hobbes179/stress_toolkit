@@ -209,7 +209,7 @@ def _render_validation(section, mesh_scale) -> None:
                .format({"Closed-form": "{:.4f}", "FEM": "{:.4f}",
                         "Δ%": "{:.3f}"})
                .apply(lambda col: [_tol_style(v) for v in col], subset=["Δ%"]))
-        st.dataframe(sty, use_container_width=True, hide_index=True)
+        st.dataframe(sty, width="stretch", hide_index=True)
         worst = max(r["Δ%"] for r in sweep_rows)
         (st.success if worst < 1.0 else st.warning)(
             f"Largest classical-vs-FEM disagreement across the catalog: "
@@ -221,7 +221,7 @@ def _render_validation(section, mesh_scale) -> None:
         st.dataframe(
             anchor.style.format(
                 {"Reference": "{:.4f}", "Closed-form": "{:.4f}", "FEM": "{:.4f}"}),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
         st.caption(
             "The closed-form and FEM values both matched against an "
@@ -790,7 +790,7 @@ def render() -> None:
                                          key="geo_dims")
                 kps = section.key_points(loads.My, loads.Mz)
                 fig_sec = draw_section(section, kps, show_dims=_show_dims)
-                st.pyplot(fig_sec, use_container_width=True)
+                st.pyplot(fig_sec, width="stretch")
                 plt.close(fig_sec)
                 rows = [(kp.id, kp.description, f"{kp.y:.4f}", f"{kp.z:.4f}")
                         for kp in kps]
@@ -803,7 +803,7 @@ def render() -> None:
                     ms = fem_mesh_size_for(section, mesh_scale)
                     with st.spinner("Meshing…"):
                         fig_m = draw_fem_mesh(section, ms)
-                    st.pyplot(fig_m, use_container_width=True)
+                    st.pyplot(fig_m, width="stretch")
                     plt.close(fig_m)
                     jc, jf, pct = _cached_jconv(section_key, ms, section)
                     flag = "✓" if pct < 2.0 else "⚠"
@@ -987,7 +987,7 @@ def render() -> None:
                     field_label, mesh_scale=mesh_scale,
                     shear_app=(y_app, z_app), overlays=_ov,
                     show_mesh=_show_mesh, field=field)
-                st.plotly_chart(fig_i, use_container_width=True)
+                st.plotly_chart(fig_i, width="stretch")
                 st.caption(
                     "FEM elasticity field — σ, τ, σ₁/σ₂, σ_vm and min-MS are "
                     "correct at every interior point (hover to probe). Peaks "
@@ -1008,7 +1008,7 @@ def render() -> None:
                     section_key, loads_key, mesh_scale, 160, section, loads)
                 fig_con = draw_report_contour(
                     section, ys_r, zs_r, sig_r, tau_r, rlabel)
-                st.pyplot(fig_con, use_container_width=True)
+                st.pyplot(fig_con, width="stretch")
                 plt.close(fig_con)
                 st.caption("Print-quality figure from the FEM elasticity field "
                            "— matches the interactive contour above.")
@@ -1020,7 +1020,7 @@ def render() -> None:
             field_label = st.radio("Stress field", list(_FIELD_KEYS.keys()),
                                    horizontal=True, key="contour_choice")
             fig_con = draw_contour(section, loads, _FIELD_KEYS[field_label])
-            st.pyplot(fig_con, use_container_width=True)
+            st.pyplot(fig_con, width="stretch")
             plt.close(fig_con)
             st.caption("Install the FEM backend (sectionproperties) for the "
                        "interactive contour with a correct shear field.")
@@ -1049,7 +1049,7 @@ def render() -> None:
                .format({c: "{:.2f}" for c in num_cols})
                .apply(_hl_gov, subset=num_cols, axis=0))
         st.dataframe(
-            sty, use_container_width=True, hide_index=True,
+            sty, width="stretch", hide_index=True,
             column_config={
                 "KP": st.column_config.TextColumn(width="small"),
                 "Description": st.column_config.TextColumn(width="medium"),
@@ -1107,7 +1107,7 @@ def render() -> None:
                   .format({"Allowable (ksi)": _fmt_num, "SF": "{:.2f}",
                            "Applied (ksi)": _fmt_applied, "MS": _fmt_ms})
                   .apply(_color_ms, subset=["MS"]))
-        st.dataframe(sty_ms, use_container_width=True, hide_index=True)
+        st.dataframe(sty_ms, width="stretch", hide_index=True)
         st.caption(
             "MS cell color: red < 0 (fail), amber < 0.25 (marginal), green ≥ "
             "0.25 (pass) — thresholds from ui.theme. +HIGH = MS > 10."

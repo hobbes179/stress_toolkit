@@ -12,7 +12,7 @@ import pathlib
 import subprocess
 from functools import lru_cache
 
-__version__ = "2.5.0"
+__version__ = "2.5.1"
 
 _ROOT = pathlib.Path(__file__).resolve().parent
 

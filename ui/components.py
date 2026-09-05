@@ -53,7 +53,7 @@ def table_export_controls(display_df: pd.DataFrame, filename: str,
     c1.download_button(
         "⬇ CSV", display_df.to_csv(index=False).encode("utf-8"),
         file_name=filename, mime="text/csv", key=f"{key}_csv",
-        use_container_width=True,
+        width="stretch",
     )
     with c2.expander("Copy as Markdown"):
         st.code(df_to_markdown(display_df), language="markdown")

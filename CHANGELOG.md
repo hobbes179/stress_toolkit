@@ -33,6 +33,60 @@ mesh-dependent and not a converged design value — enable **corner fillets**
 
 ---
 
+## v2.5.1 — Element width API migration + dependency bound (2026-09-05)
+
+**Not results-changing.** Recorded because it changes what gets deployed, and
+because the reasoning behind "explicit, not deleted" is not recoverable from
+the diff.
+
+Streamlit replaced the boolean `use_container_width` with a string `width`
+("stretch" / "content"). The runtime warning names a removal date of
+2025-12-31, now well past, and the removal is already underway element by
+element upstream (`use_column_width` is gone from `st.image` as of 1.61). A
+removal lands as a `TypeError` at render time, in production — Streamlit Cloud
+installs the newest release at build time, so there is no local warning first.
+
+All 11 remaining call sites migrated (`Home.py` ×1, `ui/components.py` ×1,
+`apps/beam_section/app.py` ×9). `tierod`, `bolt_bending` and `beam_line` were
+written after the rename and were already clean.
+
+**Why every site is explicit rather than deleted.** `st.dataframe`,
+`st.pyplot` and `st.plotly_chart` now default to `width="stretch"`, so nine of
+the eleven arguments were redundant and could simply have been removed. The
+other two could not: `st.page_link` and `st.download_button` default to
+`width="content"`. Deleting the argument there would not raise — it would
+silently shrink the landing-page CTA and the CSV export button. The CTA
+matters because `ui/styles.py` styles `[data-testid="stPageLink"] a` as a
+full-width filled button that visually completes the module card above it; at
+`content` width that becomes a small centred pill and the card reads broken.
+Passing `width=` everywhere also makes the app independent of any future
+default change, which is the same failure mode one step removed.
+
+**Verified equivalent at the wire level.** Both forms were A/B'd through
+`DeltaGenerator._enqueue` for all five affected element types
+(`dataframe`, `pyplot`, `plotly_chart`, `download_button`, `button`): the
+emitted `LayoutConfig` is identical, so the frontend receives the same layout
+instruction and rendering is unchanged at every viewport, mobile included.
+Streamlit's own shim confirms it — the deprecated path runs
+`width = "stretch" if use_container_width else "content"`. The responsive
+CSS in `ui/styles.py` (the 900/768/480px breakpoints and the
+`overflow-x: auto` rule on `stDataFrame`) was not touched.
+
+**Dependency bounded** to `streamlit>=1.49,<2`. The floor is load-bearing:
+1.49 is where `width=` landed on `st.dataframe` and `st.pyplot` (1.46 covered
+most other elements), so below it every migrated call site is a `TypeError`.
+The cap stops a major release changing the runtime under a deployed app.
+
+**New gate:** `tests/test_layout_api.py` (16 tests) — the deprecated argument
+is absent repo-wide, `width=` exists on every element the app sizes, the
+assumed per-element defaults still hold, the dependency stays bounded, and
+`Home.py` + `pages/1_Beam_Section_Stress.py` render headlessly without
+exception. The beam-section page had no headless render test before this;
+`streamlit run` starting cleanly only proves the module imports, since the
+script body does not execute until a browser connects. Suite: 1142 → 1158.
+
+---
+
 ## v2.5.0 — Beam Diagrams: a line-beam solver (2026-09-04)
 
 **New module.** `apps/beam_line/` + `library/beam_line/` + page 5. Shear,
